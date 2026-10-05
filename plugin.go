@@ -23,17 +23,7 @@ type plugin struct {
 var _ spi.IPMAASPlugin = (*plugin)(nil)
 
 func NewPlugin(config PluginConfig) Plugin {
-	defaults := NewPluginConfig()
-
-	if config.ListenAddress == "" {
-		config.ListenAddress = defaults.ListenAddress
-	}
-
-	if config.DiscoveryPrefix == "" {
-		config.DiscoveryPrefix = defaults.DiscoveryPrefix
-	}
-
-	return &plugin{config: config}
+	return &plugin{config: config.withDefaults()}
 }
 
 func (p *plugin) ShortName() string {
@@ -42,16 +32,7 @@ func (p *plugin) ShortName() string {
 
 func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.container = container
-
-	displayNames := make(map[string]string)
-
-	for _, device := range p.config.Devices {
-		if device.DisplayName != "" {
-			displayNames[device.Name] = device.DisplayName
-		}
-	}
-
-	p.registry = newRegistry(container, p.config.DiscoveryPrefix, displayNames)
+	p.registry = newRegistry(container, p.config.DiscoveryPrefix, p.config.displayNames())
 }
 
 func (p *plugin) Start() {
@@ -62,40 +43,43 @@ func (p *plugin) Start() {
 		return
 	}
 
-	devices := make(map[string]string, len(p.config.Devices))
+	mqttBroker, address, err := p.startBroker()
+	if err != nil {
+		fmt.Printf("%T ERROR: not starting the MQTT broker: %v\n", *p, err)
+		return
+	}
 
-	for _, device := range p.config.Devices {
-		if _, duplicate := devices[device.Name]; duplicate {
-			fmt.Printf("%T ERROR: device %q is configured more than once, not starting the MQTT broker\n", *p, device.Name)
-			return
-		}
+	p.broker = mqttBroker
 
-		devices[device.Name] = device.Password
+	fmt.Printf("%T MQTT broker listening on %s for %d device(s)\n", *p, address, len(p.config.Devices))
+}
+
+// startBroker binds the configured address and starts the broker on it. If it fails, nothing is left
+// listening.
+func (p *plugin) startBroker() (*broker.Broker, net.Addr, error) {
+	credentials, err := p.config.deviceCredentials()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Bind here, rather than leaving it to the broker, so that a port that's in use is reported
 	// to the one place that can say so clearly.
 	listener, err := net.Listen("tcp", p.config.ListenAddress)
 	if err != nil {
-		fmt.Printf("%T ERROR: unable to listen on %s, not starting the MQTT broker: %v\n", *p, p.config.ListenAddress, err)
-		return
+		return nil, nil, fmt.Errorf("unable to listen on %s: %w", p.config.ListenAddress, err)
 	}
 
-	b, err := broker.New(broker.Config{
+	mqttBroker, err := broker.New(broker.Config{
 		Listener:        listener,
-		Devices:         devices,
+		Devices:         credentials,
 		DiscoveryPrefix: p.config.DiscoveryPrefix,
 	}, p.brokerCallbacks())
 	if err != nil {
 		_ = listener.Close()
-		fmt.Printf("%T ERROR: unable to start the MQTT broker: %v\n", *p, err)
-
-		return
+		return nil, nil, err
 	}
 
-	p.broker = b
-
-	fmt.Printf("%T MQTT broker listening on %s for %d device(s)\n", *p, listener.Addr(), len(devices))
+	return mqttBroker, listener.Addr(), nil
 }
 
 // brokerCallbacks hands everything the broker reports over to the plugin goroutine. The callbacks
@@ -135,21 +119,30 @@ func (p *plugin) enqueue(f func()) {
 func (p *plugin) Stop() chan func() {
 	fmt.Printf("%T Stopping...\n", *p)
 
+	// Deregister every entity, and from here on ignore anything devices still send. This only touches
+	// state owned by this goroutine and doesn't wait on anything, so it's safe to do right here.
 	p.registry.Shutdown()
 
-	b := p.broker
+	// Take the broker out of the plugin's state, so that closing it is the job of exactly one place.
+	broker := p.broker
 	p.broker = nil
 
-	if b == nil {
+	// The broker never started (nothing was configured, or startup failed), so there's nothing to
+	// wait for.
+	if broker == nil {
 		return p.container.ClosedCallbackChannel()
 	}
 
+	// Close the broker on its own goroutine, and tell the core when it's finished by closing the
+	// channel we hand back. Until then this goroutine stays free to run whatever the broker's
+	// connections are still handing over, which the registry now ignores, so they can finish and
+	// Close can return.
 	done := make(chan func())
 
 	go func() {
 		defer close(done)
 
-		if err := b.Close(); err != nil {
+		if err := broker.Close(); err != nil {
 			fmt.Printf("%T error closing the MQTT broker: %v\n", *p, err)
 		}
 	}()
