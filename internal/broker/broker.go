@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 
 	mqtt "github.com/mochi-mqtt/server/v2"
@@ -116,6 +117,10 @@ func (b *Broker) Close() error {
 	return b.server.Close()
 }
 
+// esphomeNamespacePrefix is the start of the topics ESPHome itself uses, as opposed to the ones under a
+// device's own name (esphome/discover, esphome/ping/<name>).
+const esphomeNamespacePrefix = "esphome/"
+
 type hook struct {
 	mqtt.HookBase
 
@@ -147,6 +152,7 @@ func (h *hook) Provides(b byte) bool {
 	return bytes.Contains([]byte{
 		mqtt.OnConnectAuthenticate,
 		mqtt.OnACLCheck,
+		mqtt.OnPublish,
 		mqtt.OnPublished,
 		mqtt.OnSessionEstablished,
 		mqtt.OnDisconnect,
@@ -175,9 +181,43 @@ func (h *hook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
 		return true
 	}
 
-	h.logger.Warn("denying topic access", "device", name, "topic", topic, "write", write)
+	attrs := []any{"device", name}
+
+	if write {
+		attrs = append(attrs, "topic", topic)
+	} else {
+		attrs = append(attrs, "filter", topic)
+	}
+
+	// The ESPHome topics a device legitimately uses are allowed (see allowed), so another one is something
+	// else in ESPHome's own namespace, which the device's configuration should be asked not to use.
+	if strings.HasPrefix(topic, esphomeNamespacePrefix) {
+		attrs = append(attrs, "hint", "this is in ESPHome's own namespace, not the device's: "+
+			"the broker only tolerates esphome/discover and esphome/ping/<device>, which come from "+
+			"ESPHome's node discovery (set discover_ip: false in the device's mqtt: section to stop it)")
+	}
+
+	if write {
+		// The reason a device that does this keeps reconnecting: mochi drops a denied QoS 0 publish quietly, but
+		// an MQTT 3.1.1 client has no way to be told "no" to a QoS 1 or 2 publish, so it's disconnected.
+		h.logger.Warn("denying publish to a topic the device may not use "+
+			"(an MQTT 3.1.1 client that sent it at QoS 1 or 2 is disconnected)", attrs...)
+	} else {
+		h.logger.Warn("denying subscription to a topic filter the device may not use", attrs...)
+	}
 
 	return false
+}
+
+// OnPublish runs for a publish the ACL allowed. It's where ESPHome's node discovery is thrown away: the
+// publisher gets the acknowledgement it's waiting for, but the message is neither delivered to anyone nor
+// retained. (OnPublished still reports it, so capturing messages shows what a device sends.)
+func (h *hook) OnPublish(cl *mqtt.Client, pk packets.Packet) (packets.Packet, error) {
+	if !cl.Net.Inline && isNodeDiscoveryPublish(string(cl.Properties.Username), pk.TopicName) {
+		return pk, packets.CodeSuccessIgnore
+	}
+
+	return pk, nil
 }
 
 func (h *hook) OnPublished(cl *mqtt.Client, pk packets.Packet) {

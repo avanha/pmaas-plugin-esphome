@@ -27,6 +27,23 @@ func TestAllowed(t *testing.T) {
 		{"publish to broker topics", "garage1", "$SYS/broker/uptime", true, false},
 		{"name that merely starts the same", "garage1", "garage10/sensor/temp/state", true, false},
 		{"empty device", "", "anything", true, false},
+
+		// ESPHome's node discovery, exactly as ESPHome uses it, and nothing wider.
+		{"publish the discover topic", "garage1", "esphome/discover", true, true},
+		{"publish its own discover answer", "garage1", "esphome/discover/garage1", true, true},
+		{"publish another device's discover answer", "garage1", "esphome/discover/garage2", true, false},
+		{"publish under discover with a longer path", "garage1", "esphome/discover/garage1/x", true, false},
+		{"subscribe to the discover topic", "garage1", "esphome/discover", false, true},
+		{"subscribe to everything under discover", "garage1", "esphome/discover/#", false, true},
+		{"subscribe to its own ping topic", "garage1", "esphome/ping/garage1", false, true},
+		{"subscribe to another device's ping topic", "garage1", "esphome/ping/garage2", false, false},
+		{"publish to its own ping topic", "garage1", "esphome/ping/garage1", true, false},
+		{"subscribe to a single level under discover", "garage1", "esphome/discover/+", false, false},
+		{"subscribe to another device's discover answer", "garage1", "esphome/discover/garage2", false, false},
+		{"subscribe to all of esphome", "garage1", "esphome/#", false, false},
+		{"publish to all of esphome", "garage1", "esphome/other", true, false},
+		{"a device named like the topic's last segment", "discover", "esphome/discover/discover", true, true},
+		{"discover for an empty device", "", "esphome/discover", true, false},
 	}
 
 	for _, c := range cases {

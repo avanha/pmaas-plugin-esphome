@@ -2,7 +2,9 @@ package esphome
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
+	"os"
 
 	"github.com/avanha/pmaas-plugin-esphome/internal/broker"
 	spi "github.com/avanha/pmaas-spi"
@@ -73,6 +75,7 @@ func (p *plugin) startBroker() (*broker.Broker, net.Addr, error) {
 		Listener:        listener,
 		Devices:         credentials,
 		DiscoveryPrefix: p.config.DiscoveryPrefix,
+		Logger:          brokerLogger(),
 	}, p.brokerCallbacks())
 	if err != nil {
 		_ = listener.Close()
@@ -80,6 +83,28 @@ func (p *plugin) startBroker() (*broker.Broker, net.Addr, error) {
 	}
 
 	return mqttBroker, listener.Addr(), nil
+}
+
+// brokerLogger is where the broker reports what it refuses: a device that fails to authenticate, or touches
+// a topic it may not. Those are the things an operator needs to see, since a device that's refused just
+// keeps reconnecting and says nothing useful. Warnings and errors only, since the broker's own debug and
+// info output is noisy.
+func brokerLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level:       slog.LevelWarn,
+		ReplaceAttr: describeUnnamedBrokerWarnings,
+	}))
+}
+
+// describeUnnamedBrokerWarnings gives the broker's one warning that has no message some words. It logs, with an
+// empty message, a connection that ended with an error. An ESP32 that reboots or loses its WiFi ends that
+// way, with "error=EOF", and a bare "msg=\"\"" tells whoever's reading nothing about it.
+func describeUnnamedBrokerWarnings(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) == 0 && a.Key == slog.MessageKey && a.Value.String() == "" {
+		a.Value = slog.StringValue("a device's connection ended with an error (a device that rebooted or lost its network ends this way)")
+	}
+
+	return a
 }
 
 // brokerCallbacks hands everything the broker reports over to the plugin goroutine. The callbacks

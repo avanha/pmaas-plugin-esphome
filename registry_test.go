@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -604,4 +605,51 @@ func TestEntityName(t *testing.T) {
 
 func entityForName(name string, deviceName string) hadiscovery.Entity {
 	return hadiscovery.Entity{Name: name, Device: hadiscovery.Device{Name: deviceName}}
+}
+
+// The binary sensor from a real device, whose YAML didn't set a device_class, and the status LED beside it.
+// Neither is tracked, and the log says why and what to change.
+func TestDiscovery_TheCapturedDoorSensorWithoutADeviceClassIsIgnoredWithAHint(t *testing.T) {
+	f := newFixture(t)
+
+	f.discover("garagedoor1", "binary_sensor", "garage_door_position",
+		`{"name":"Garage Door Position","stat_t":"garagedoor1/binary_sensor/garage_door_position/state","avty_t":"garagedoor1/status","uniq_id":"ESPbinary_sensorgarage_door_position","dev":{"ids":"20500de464ec","name":"GarageDoor1","mdl":"esp32","mf":"Espressif"}}`)
+	f.discover("garagedoor1", "light", "garage_esp_status_led",
+		`{"schema":"json","supported_color_modes":["onoff"],"name":"Garage ESP Status LED","stat_t":"garagedoor1/light/garage_esp_status_led/state","cmd_t":"garagedoor1/light/garage_esp_status_led/command","uniq_id":"ESPlightgarage_esp_status_led","dev":{"ids":"20500de464ec","name":"GarageDoor1"}}`)
+
+	if len(f.container.registrations) != 0 {
+		t.Fatalf("unexpected registrations %+v", f.container.registrations)
+	}
+
+	if len(f.logs) != 2 {
+		t.Fatalf("expected a log line for each ignored entity, got %v", f.logs)
+	}
+
+	if !strings.Contains(f.logs[0], "garage_door_position") || !strings.Contains(f.logs[0], "set device_class: garage_door") {
+		t.Errorf("the binary sensor's log line doesn't say what to do: %q", f.logs[0])
+	}
+
+	if !strings.Contains(f.logs[1], "garage_esp_status_led") || strings.Contains(f.logs[1], "set device_class: garage_door") ||
+		!strings.Contains(f.logs[1], "temperature or humidity") {
+		t.Errorf("the light's log line should list what is tracked, not suggest a door: %q", f.logs[1])
+	}
+}
+
+func TestConnectAndDisconnectAreLogged(t *testing.T) {
+	f := newFixture(t)
+
+	f.registry.HandleConnected("garagedoor1")
+	f.registry.HandleDisconnected("garagedoor1")
+
+	if len(f.logs) != 2 || f.logs[0] != "garagedoor1: connected" || f.logs[1] != "garagedoor1: disconnected" {
+		t.Fatalf("unexpected log lines %v", f.logs)
+	}
+
+	// After shutdown nothing is processed, and nothing is logged either.
+	f.registry.Shutdown()
+	f.registry.HandleConnected("garagedoor1")
+
+	if len(f.logs) != 2 {
+		t.Fatalf("logged after shutdown: %v", f.logs)
+	}
 }

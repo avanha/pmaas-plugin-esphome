@@ -101,6 +101,8 @@ func (r *registry) HandleConnected(device string) {
 		return
 	}
 
+	r.logf("%s: connected", device)
+
 	n := r.nodeFor(device)
 	n.connected = true
 	n.onlineSince = r.now()
@@ -116,6 +118,8 @@ func (r *registry) HandleDisconnected(device string) {
 	if r.stopped {
 		return
 	}
+
+	r.logf("%s: disconnected", device)
 
 	n := r.nodeFor(device)
 	n.connected = false
@@ -216,9 +220,21 @@ func (r *registry) handleDiscovery(device string, topic string, payload []byte) 
 	case entity.Component == "binary_sensor" && isDoorClass(entity.DeviceClass):
 		r.upsertDoor(n, *entity)
 	default:
-		r.logf("%s: ignoring unsupported %s %q (device_class %q)",
-			device, entity.Component, entity.ObjectID, entity.DeviceClass)
+		r.logf("%s: ignoring unsupported %s %q (device_class %q): %s",
+			device, entity.Component, entity.ObjectID, entity.DeviceClass, unsupportedHint(*entity))
 	}
+}
+
+// unsupportedHint says what to do about an entity that isn't tracked. The one that comes up in practice is a
+// binary sensor whose YAML doesn't say what it is: ESPHome only announces a device_class if one is set, and
+// without one there's no telling a door from a motion sensor.
+func unsupportedHint(e hadiscovery.Entity) string {
+	if e.Component == "binary_sensor" && e.DeviceClass == "" {
+		return "if it's a door, set device_class: garage_door (or door) on it in the device's YAML"
+	}
+
+	return "PMAAS tracks sensors with device_class temperature or humidity, and binary_sensors with device_class " +
+		"garage_door, door or opening"
 }
 
 // unusable returns why e can't be tracked, or "" if it can.
