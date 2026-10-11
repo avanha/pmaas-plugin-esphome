@@ -1,6 +1,7 @@
 package esphome
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -105,21 +106,24 @@ func (p *plugin) startBroker() (*broker.Broker, net.Addr, error) {
 // keeps reconnecting and says nothing useful. Warnings and errors only, since the broker's own debug and
 // info output is noisy.
 func brokerLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level:       slog.LevelWarn,
-		ReplaceAttr: describeUnnamedBrokerWarnings,
-	}))
+	return slog.New(dropUnnamedBrokerWarnings{slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	})})
 }
 
-// describeUnnamedBrokerWarnings gives the broker's one warning that has no message some words. It logs, with an
-// empty message, a connection that ended with an error. An ESP32 that reboots or loses its WiFi ends that
-// way, with "error=EOF", and a bare "msg=\"\"" tells whoever's reading nothing about it.
-func describeUnnamedBrokerWarnings(groups []string, a slog.Attr) slog.Attr {
-	if len(groups) == 0 && a.Key == slog.MessageKey && a.Value.String() == "" {
-		a.Value = slog.StringValue("a device's connection ended with an error (a device that rebooted or lost its network ends this way)")
+// dropUnnamedBrokerWarnings discards the broker's one warning that has no message. It logs, with an empty
+// message, every connection that ended with an error, and an ESP32 that reboots or loses its WiFi ends that
+// way ("error=EOF"). That's routine, and the registry already logs the device as disconnected.
+type dropUnnamedBrokerWarnings struct {
+	slog.Handler
+}
+
+func (h dropUnnamedBrokerWarnings) Handle(ctx context.Context, record slog.Record) error {
+	if record.Message == "" {
+		return nil
 	}
 
-	return a
+	return h.Handler.Handle(ctx, record)
 }
 
 // brokerCallbacks hands everything the broker reports over to the plugin goroutine. The callbacks

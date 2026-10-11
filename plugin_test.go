@@ -2,7 +2,6 @@ package esphome
 
 import (
 	"io"
-	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -396,33 +395,7 @@ func TestPlugin_LogsWhatTheBrokerRefuses(t *testing.T) {
 	}
 }
 
-func TestBrokerLogger_GivesTheUnnamedConnectionWarningSomeWords(t *testing.T) {
-	var out strings.Builder
-
-	logger := slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{
-		Level:       slog.LevelWarn,
-		ReplaceAttr: describeUnnamedBrokerWarnings,
-	}))
-
-	logger.Warn("", "listener", "esphome", "error", io.EOF)
-	logger.Warn("something with a message of its own", "k", "v")
-
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("unexpected output %q", out.String())
-	}
-
-	if !strings.Contains(lines[0], "a device's connection ended with an error") || !strings.Contains(lines[0], "error=EOF") ||
-		strings.Contains(lines[0], `msg=""`) {
-		t.Errorf("the unnamed warning wasn't described: %q", lines[0])
-	}
-
-	if !strings.Contains(lines[1], `msg="something with a message of its own"`) {
-		t.Errorf("a warning that already had a message was changed: %q", lines[1])
-	}
-}
-
-func TestBrokerLogger_IsWiredToDescribeUnnamedWarnings(t *testing.T) {
+func TestBrokerLogger_DropsTheUnnamedConnectionWarningButKeepsTheRest(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -433,15 +406,18 @@ func TestBrokerLogger_IsWiredToDescribeUnnamedWarnings(t *testing.T) {
 
 	defer func() { os.Stdout = original }()
 
-	brokerLogger().Warn("", "listener", "esphome", "error", io.EOF) // the logger writes to stdout as of creation
-	brokerLogger().Info("not shown: below warning level")
+	logger := brokerLogger() // the logger writes to stdout as of creation
+	logger.Warn("", "listener", "esphome", "error", io.EOF)
+	logger.Warn("something with a message of its own", "k", "v")
+	logger.Info("not shown: below warning level")
 
 	os.Stdout = original
 	_ = writer.Close()
 
 	output, _ := io.ReadAll(reader)
 
-	if !strings.Contains(string(output), "a device's connection ended with an error") || strings.Contains(string(output), "not shown") {
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], `msg="something with a message of its own"`) {
 		t.Fatalf("unexpected output %q", output)
 	}
 }
