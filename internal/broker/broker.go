@@ -46,8 +46,9 @@ type Callbacks struct {
 
 	// OnDeviceConnected and OnDeviceDisconnected are called when a device's session starts and
 	// ends. If a device reconnects before its old connection is noticed to be dead, only the new
-	// connection counts: the old one's end is not reported.
-	OnDeviceConnected    func(device string)
+	// connection counts: the old one's end is not reported. address is the device's IP address as the
+	// broker sees it on the connection, without the port.
+	OnDeviceConnected    func(device string, address string)
 	OnDeviceDisconnected func(device string)
 }
 
@@ -244,7 +245,7 @@ func (h *hook) OnSessionEstablished(cl *mqtt.Client, _ packets.Packet) {
 	s.current = cl
 
 	if h.callbacks.OnDeviceConnected != nil {
-		h.callbacks.OnDeviceConnected(name)
+		h.callbacks.OnDeviceConnected(name, remoteHost(cl.Net.Remote))
 	}
 }
 
@@ -269,6 +270,17 @@ func (h *hook) OnDisconnect(cl *mqtt.Client, _ error, _ bool) {
 	if h.callbacks.OnDeviceDisconnected != nil {
 		h.callbacks.OnDeviceDisconnected(name)
 	}
+}
+
+// remoteHost is the host part of a remote address such as "10.47.7.17:54321" or "[fe80::1]:54321". An address
+// that isn't in that form is returned as it is, since an odd address is more use than none.
+func remoteHost(address string) string {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return address
+	}
+
+	return host
 }
 
 // deviceName returns the device a client is connected as, if it's one of ours (the inline client

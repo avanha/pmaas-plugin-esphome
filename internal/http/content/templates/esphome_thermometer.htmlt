@@ -1,0 +1,24 @@
+<div class="entity-esphome-thermometer{{if not .DeviceConnected}} offline{{end}}">
+    <div class="title-row">
+        <div class="name">{{.Name | html}}</div>
+        {{if not .DeviceConnected}}
+            <i class="bi bi-wifi-off offline-icon" title="The device is offline, so this is its last reading"></i>
+        {{end}}
+    </div>
+    {{if not .HasData}}
+        <div class="waiting">Waiting for data</div>
+    {{else}}
+        <div class="reading">
+            <div class="temp-celsius">{{printf "%.1f" .Temperature}} C</div>
+            <div class="temp-fahrenheit">{{CelsiusToFahrenheit .Temperature | printf "%.1f"}} F</div>
+            {{if .HasHumidity}}
+                <div class="humidity"><i class="bi bi-droplet-fill"></i> {{printf "%.1f" .Humidity}}%</div>
+            {{end}}
+        </div>
+        <div class="timestamp"><i class="bi bi-stopwatch"></i> {{RelativeTime .LastUpdateTime}}</div>
+    {{end}}
+    {{if not .DeviceConnected}}
+        <div class="offline-note">Device offline: last known reading</div>
+    {{end}}
+    <div class="device-note">{{.DeviceName | html}}</div>
+</div>

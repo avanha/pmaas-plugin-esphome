@@ -1,0 +1,80 @@
+<div class="entity-esphome-status">
+    <div class="group">
+        <div class="group-label">Broker</div>
+        <div class="row">
+            {{if .BrokerRunning}}
+                <i class="bi bi-check-circle-fill ok"></i>
+                <span class="label">Listening on</span> <span class="value">{{.ListenAddress | html}}</span>
+            {{else}}
+                <i class="bi bi-x-circle-fill bad"></i>
+                <span class="label">Not running</span>
+                {{if .BrokerProblem}}<span class="problem wrap">{{.BrokerProblem | html}}</span>{{end}}
+            {{end}}
+        </div>
+        <div class="row">
+            <span class="label">Discovery prefix</span> <span class="value">{{.DiscoveryPrefix | html}}</span>
+            {{if .CaptureMessages}}
+                <span class="capture-note" title="CaptureMessages is on: every message a device sends is being logged">
+                    <i class="bi bi-exclamation-triangle-fill"></i> Capturing messages
+                </span>
+            {{end}}
+        </div>
+        <div class="row">
+            <span class="label">Last message</span>
+            <span class="timestamp">
+                {{if .LastMessageTime.IsZero}}Never{{else}}{{.LastMessageTime.Format "2006-01-02 3:04:05 PM"}} ({{RelativeTime .LastMessageTime}}){{end}}
+            </span>
+        </div>
+        <div class="row">
+            <span class="label">Entities</span>
+            <span class="value">
+                {{.ThermometerCount}} thermometer{{if ne .ThermometerCount 1}}s{{end}},
+                {{.DoorSensorCount}} door sensor{{if ne .DoorSensorCount 1}}s{{end}}
+            </span>
+        </div>
+    </div>
+    <div class="group">
+        <div class="group-label">
+            Devices
+            <span class="summary">({{.ConnectedDevices}} of {{len .Devices}} connected)</span>
+        </div>
+        {{range .Devices}}
+            <div class="device{{if .Connected}} connected{{else}} disconnected{{end}}">
+                <div class="device-header">
+                    {{if .Connected}}
+                        <i class="bi bi-wifi connection-icon ok"></i>
+                    {{else}}
+                        <i class="bi bi-wifi-off connection-icon bad"></i>
+                    {{end}}
+                    <span class="name">{{.Label | html}}</span>
+                    <span class="device-name">{{.Name | html}}</span>
+                    <span class="connection">
+                        {{if .Connected}}
+                            Connected {{RelativeTime .ConnectedSince}}
+                        {{else if .DisconnectedSince.IsZero}}
+                            Never connected
+                        {{else}}
+                            Disconnected {{RelativeTime .DisconnectedSince}}
+                        {{end}}
+                    </span>
+                </div>
+                <div class="device-details">
+                    {{if .Address}}<span class="detail"><span class="label">Address</span> {{.Address | html}}</span>{{end}}
+                    {{if .Firmware}}<span class="detail"><span class="label">Firmware</span> {{.Firmware | html}}</span>{{end}}
+                    {{if .Model}}
+                        <span class="detail">
+                            <span class="label">Model</span> {{.Model | html}}{{if .Manufacturer}} ({{.Manufacturer | html}}){{end}}
+                        </span>
+                    {{end}}
+                    {{if .MAC}}<span class="detail"><span class="label">MAC</span> {{.MAC | html}}</span>{{end}}
+                    <span class="detail"><span class="label">Entities</span> {{.EntityCount}}</span>
+                    {{if not .LastMessageTime.IsZero}}
+                        <span class="detail"><span class="label">Last message</span> {{RelativeTime .LastMessageTime}}</span>
+                    {{end}}
+                </div>
+            </div>
+        {{else}}
+            <div class="none">No devices are configured.</div>
+        {{end}}
+    </div>
+</div>

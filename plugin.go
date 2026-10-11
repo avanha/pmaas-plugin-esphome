@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/avanha/pmaas-plugin-esphome/internal/broker"
+	httphandler "github.com/avanha/pmaas-plugin-esphome/internal/http"
 	spi "github.com/avanha/pmaas-spi"
 )
 
@@ -15,17 +16,23 @@ type Plugin interface {
 }
 
 type plugin struct {
-	config    PluginConfig
-	container spi.IPMAASContainer
-	registry  *registry
-	broker    *broker.Broker
+	config      PluginConfig
+	container   spi.IPMAASContainer
+	registry    *registry
+	broker      *broker.Broker
+	httpHandler *httphandler.Handler
+
+	// listenAddress is where the broker is listening, or was configured to; brokerProblem is why it isn't
+	// running, if it isn't. Both are for the status page.
+	listenAddress string
+	brokerProblem string
 }
 
 // Force implementation of spi.IPMAASPlugin
 var _ spi.IPMAASPlugin = (*plugin)(nil)
 
 func NewPlugin(config PluginConfig) Plugin {
-	return &plugin{config: config.withDefaults()}
+	return &plugin{config: config.withDefaults(), httpHandler: httphandler.NewHandler()}
 }
 
 func (p *plugin) ShortName() string {
@@ -35,23 +42,31 @@ func (p *plugin) ShortName() string {
 func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.container = container
 	p.registry = newRegistry(container, p.config.DiscoveryPrefix, p.config.displayNames())
+	p.httpHandler.Init(container, &entityStoreAdapter{parent: p})
 }
 
 func (p *plugin) Start() {
 	fmt.Printf("%T Starting...\n", *p)
 
+	p.listenAddress = p.config.ListenAddress
+
 	if len(p.config.Devices) == 0 {
+		p.brokerProblem = "no devices are configured"
 		fmt.Printf("%T WARNING: no devices configured, not starting the MQTT broker\n", *p)
+
 		return
 	}
 
 	mqttBroker, address, err := p.startBroker()
 	if err != nil {
+		p.brokerProblem = err.Error()
 		fmt.Printf("%T ERROR: not starting the MQTT broker: %v\n", *p, err)
+
 		return
 	}
 
 	p.broker = mqttBroker
+	p.listenAddress = address.String()
 
 	fmt.Printf("%T MQTT broker listening on %s for %d device(s)\n", *p, address, len(p.config.Devices))
 }
@@ -121,8 +136,8 @@ func (p *plugin) brokerCallbacks() broker.Callbacks {
 
 			p.enqueue(func() { p.registry.HandleMessage(device, topic, payload) })
 		},
-		OnDeviceConnected: func(device string) {
-			p.enqueue(func() { p.registry.HandleConnected(device) })
+		OnDeviceConnected: func(device string, address string) {
+			p.enqueue(func() { p.registry.HandleConnected(device, address) })
 		},
 		OnDeviceDisconnected: func(device string) {
 			p.enqueue(func() { p.registry.HandleDisconnected(device) })

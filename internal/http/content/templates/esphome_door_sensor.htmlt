@@ -1,0 +1,29 @@
+<div class="entity-esphome-door-sensor {{.PositionClass | html}}{{if not .DeviceConnected}} offline{{end}}">
+    <div class="title-row">
+        <div class="name">{{.Name | html}}</div>
+        {{if not .DeviceConnected}}
+            <i class="bi bi-wifi-off offline-icon" title="The device is offline, so this is its last known position"></i>
+        {{end}}
+    </div>
+    {{if not .HasData}}
+        <div class="waiting">Waiting for data</div>
+    {{else}}
+        <div class="position-row">
+            <i class="bi {{if eq .PositionClass "open"}}bi-door-open-fill{{else if eq .PositionClass "closed"}}bi-door-closed-fill{{else}}bi-question-circle-fill{{end}} door-icon {{.PositionClass | html}}"></i>
+            <span class="position {{.PositionClass | html}}">{{.Position | html}}</span>
+        </div>
+        <div class="timestamp">
+            {{if .LastChangeTime.IsZero}}
+                <i class="bi bi-stopwatch"></i> Reported {{RelativeTime .LastUpdateTime}}
+            {{else}}
+                <i class="bi bi-stopwatch"></i> {{.Position | html}} since {{RelativeTime .LastChangeTime}}
+            {{end}}
+        </div>
+    {{end}}
+    {{if not .DeviceConnected}}
+        <div class="offline-note">
+            Device offline {{if not .OfflineSince.IsZero}}since {{RelativeTime .OfflineSince}}{{end}}: last known position
+        </div>
+    {{end}}
+    <div class="device-note">{{.DeviceName | html}}</div>
+</div>

@@ -1,0 +1,105 @@
+.entity-esphome-status {
+    display: flex;
+    flex-flow: column;
+}
+
+.entity-esphome-status .group {
+    margin: 0 0 10px 0;
+}
+
+.entity-esphome-status .group-label {
+    font-weight: bold;
+    margin: 0 0 4px 0;
+}
+
+.entity-esphome-status .group-label .summary {
+    font-weight: normal;
+    opacity: 0.75;
+}
+
+.entity-esphome-status .row {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+    margin: 0 0 2px 0;
+}
+
+.entity-esphome-status .label::after {
+    content: ":";
+}
+
+.entity-esphome-status .ok {
+    color: #5cb85c;
+}
+
+.entity-esphome-status .bad {
+    color: #d9534f;
+}
+
+/* A problem, such as why the broker isn't running, can be long: it wraps within the page. */
+.entity-esphome-status .wrap {
+    overflow-wrap: anywhere;
+    min-width: 0;
+    color: #d9534f;
+}
+
+.entity-esphome-status .capture-note {
+    color: #b8860b;
+    font-size: 0.9em;
+}
+
+.entity-esphome-status .none {
+    opacity: 0.8;
+}
+
+.entity-esphome-status .device {
+    border: 1px solid #c8c8c8;
+    border-left-width: 5px;
+    border-radius: 3px;
+    padding: 5px 8px;
+    margin: 0 0 6px 0;
+    overflow-wrap: anywhere;
+}
+
+.entity-esphome-status .device.connected {
+    border-left-color: #5cb85c;
+}
+
+.entity-esphome-status .device.disconnected {
+    border-left-color: #d9534f;
+}
+
+.entity-esphome-status .device-header {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+}
+
+.entity-esphome-status .device-header .name {
+    font-weight: bold;
+}
+
+.entity-esphome-status .device-header .device-name {
+    opacity: 0.6;
+    font-size: 0.9em;
+}
+
+.entity-esphome-status .device-header .connection {
+    font-size: 0.9em;
+    opacity: 0.85;
+}
+
+/* Details sit under the header, each its own unit so they wrap rather than run out of the page. */
+.entity-esphome-status .device-details {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 2px 14px;
+    margin: 3px 0 0 0;
+    font-size: 0.9em;
+}
+
+.entity-esphome-status .device-details .label {
+    opacity: 0.7;
+}

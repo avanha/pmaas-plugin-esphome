@@ -27,6 +27,8 @@ type recorder struct {
 	messages     chan message
 	connected    chan string
 	disconnected chan string
+	// addresses has the address each device connected from, in the same order as connected.
+	addresses chan string
 	// lifecycle has "connected" and "disconnected" in the order they were reported.
 	lifecycle chan string
 }
@@ -35,6 +37,7 @@ func newRecorder() *recorder {
 	return &recorder{
 		messages:     make(chan message, 100),
 		connected:    make(chan string, 100),
+		addresses:    make(chan string, 100),
 		disconnected: make(chan string, 100),
 		lifecycle:    make(chan string, 1000),
 	}
@@ -45,7 +48,8 @@ func (r *recorder) callbacks() Callbacks {
 		OnMessage: func(device string, topic string, payload []byte, retain bool) {
 			r.messages <- message{device, topic, string(payload), retain}
 		},
-		OnDeviceConnected: func(device string) {
+		OnDeviceConnected: func(device string, address string) {
+			r.addresses <- address
 			r.connected <- device
 			r.lifecycle <- "connected"
 		},
@@ -202,7 +206,7 @@ func TestHook_DisconnectOfReplacedSessionIsDeliveredBeforeNewConnect(t *testing.
 		sessions: map[string]*session{"garage1": {}},
 		logger:   slog.New(slog.DiscardHandler),
 		callbacks: Callbacks{
-			OnDeviceConnected: func(string) { record("connected") },
+			OnDeviceConnected: func(string, string) { record("connected") },
 			OnDeviceDisconnected: func(string) {
 				close(inDisconnectCallback)
 				<-releaseDisconnectCallback
@@ -683,6 +687,33 @@ func TestBroker_SubscriptionsToNodeDiscoveryAreGrantedOnlyForTheDevicesOwnTopics
 
 		if granted != wantGranted {
 			t.Errorf("subscribe %q: granted=%v, want %v", filter, granted, wantGranted)
+		}
+	}
+}
+
+// The status page shows where each device is, and the broker is the only one who knows: it's the other end
+// of the connection.
+func TestBroker_ReportsTheAddressADeviceConnectedFrom(t *testing.T) {
+	_, addr, rec := startBroker(t)
+
+	mustConnect(t, addr, "c1", "garage1", "secret1")
+	expectString(t, rec.connected, "garage1")
+
+	// The test connects over loopback, and the port isn't part of the address.
+	expectString(t, rec.addresses, "127.0.0.1")
+}
+
+func TestRemoteHost(t *testing.T) {
+	for address, want := range map[string]string{
+		"10.47.7.17:54321": "10.47.7.17",
+		"[fe80::1]:54321":  "fe80::1",
+		"[::1]:1883":       "::1",
+		"no-port":          "no-port",
+		"":                 "",
+		"10.47.7.17":       "10.47.7.17",
+	} {
+		if got := remoteHost(address); got != want {
+			t.Errorf("remoteHost(%q) = %q, want %q", address, got, want)
 		}
 	}
 }

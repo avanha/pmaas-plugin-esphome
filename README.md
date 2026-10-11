@@ -4,8 +4,8 @@ A PMAAS plugin for [ESPHome](https://esphome.io) devices. It embeds an MQTT brok
 single executable: your ESP32s are configured in ESPHome YAML to connect to PMAAS, announce what they
 have, and publish their state. There is no custom firmware.
 
-**Status: phase 1.** Thermometers and door position sensors work. Switches/relays, a status page, TLS
-and rendering of door sensors are not done yet (see [Roadmap](#roadmap)).
+**Status: phase 2 (read-only).** Thermometers and door position sensors work, and there is an **ESPHome**
+status page. Switches/relays and TLS are not done yet (see [Roadmap](#roadmap)).
 
 Verified on a real ESP32 running ESPHome 2026.8.0, with an SHT3x temperature and humidity sensor and a
 reed switch: the device connects and its entities are discovered; temperature and humidity reach the
@@ -24,6 +24,16 @@ setting it needs).
 Anything else a device announces is logged and ignored. A door sensor reports `Open`, `Closed` or
 `Unknown`, when it last changed, and whether the device is currently connected; it broadcasts a
 `device.DoorPositionChangedEvent` when the position changes.
+
+## The status page
+
+The **ESPHome** entry in the menu opens a page like the other plugins': a status bar, then the entities the
+plugin owns. The status bar shows whether the broker is running (and why not, if it isn't), where it listens,
+how many of the configured devices are connected, how many thermometers and door sensors there are, and when
+a device last sent anything. Each device is listed with its address, firmware, model and MAC, and since when
+it has been connected or disconnected. Below that are the entities, grouped by device: thermometers (with
+humidity, if any), and door sensors (open/closed/unknown, when it last changed, and whether the device is
+offline, in which case the last known state is shown dimmed).
 
 ## How it works
 
@@ -187,8 +197,8 @@ func addEsphome(coreConfig *config.Config) {
 
 1. **Phase 1 (this):** broker with per-device authentication and ACLs, discovery parsing, thermometers
    and door sensors, connectivity, tests.
-2. **Phase 2:** switches/relays (`ISwitch`, commands to the device's `command_topic`), a status page
-   listing devices and entities, and a renderer for door sensors.
+2. **Phase 2 (status page and door sensor renderer done):** switches/relays (`ISwitch`, commands to the
+   device's `command_topic`) remain.
 3. **Later:** TLS (the ACME plugin's certificate), a Tasmota dialect for devices that can't run
    ESPHome, signal strength as RSSI.
 

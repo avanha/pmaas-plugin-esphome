@@ -1,0 +1,102 @@
+/* The cards for what the plugin tracks: thermometers and door sensors. */
+
+.entity-esphome-thermometer,
+.entity-esphome-door-sensor {
+    display: flex;
+    flex-flow: column;
+    gap: 3px;
+}
+
+.entity-esphome-thermometer .title-row,
+.entity-esphome-door-sensor .title-row {
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.entity-esphome-thermometer .name,
+.entity-esphome-door-sensor .name {
+    font-weight: bold;
+    overflow-wrap: anywhere;
+}
+
+.entity-esphome-thermometer .offline-icon,
+.entity-esphome-door-sensor .offline-icon {
+    color: #d9534f;
+}
+
+/* What an offline device last said is still shown, but visibly stepped back. */
+.entity-esphome-thermometer.offline .reading,
+.entity-esphome-door-sensor.offline .position-row {
+    opacity: 0.55;
+}
+
+.entity-esphome-thermometer .waiting,
+.entity-esphome-door-sensor .waiting {
+    opacity: 0.8;
+}
+
+.entity-esphome-thermometer .reading {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: baseline;
+    gap: 2px 12px;
+}
+
+.entity-esphome-thermometer .temp-celsius {
+    font-size: 1.4em;
+    font-weight: bold;
+}
+
+.entity-esphome-thermometer .temp-fahrenheit {
+    opacity: 0.8;
+}
+
+.entity-esphome-door-sensor .position-row {
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.entity-esphome-door-sensor .door-icon {
+    font-size: 1.8em;
+}
+
+.entity-esphome-door-sensor .position {
+    font-size: 1.3em;
+    font-weight: bold;
+}
+
+/* An open door is the thing worth noticing, so it's the loud colour; a closed one is calm. */
+.entity-esphome-door-sensor .open {
+    color: #d98a00;
+}
+
+.entity-esphome-door-sensor .closed {
+    color: #5cb85c;
+}
+
+.entity-esphome-door-sensor .unknown {
+    color: #888888;
+}
+
+.entity-esphome-thermometer .timestamp,
+.entity-esphome-door-sensor .timestamp {
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+.entity-esphome-thermometer .offline-note,
+.entity-esphome-door-sensor .offline-note {
+    font-size: 0.9em;
+    color: #d9534f;
+}
+
+.entity-esphome-thermometer .device-note,
+.entity-esphome-door-sensor .device-note {
+    font-size: 0.8em;
+    opacity: 0.55;
+}

@@ -3,6 +3,8 @@ package esphome
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,6 +16,8 @@ import (
 	"github.com/avanha/pmaas-spi/environment"
 	"github.com/avanha/pmaas-spi/events"
 )
+
+var errTest = errors.New("nope")
 
 type registration struct {
 	id          string
@@ -36,6 +40,27 @@ type fakeContainer struct {
 	deregistered  []string
 	broadcasts    []broadcast
 	registerErr   error
+
+	// What Init registers for the status page.
+	routes        map[string]*spi.HttpHandlerOptions
+	rendererTypes []reflect.Type
+	staticDir     string
+}
+
+func (c *fakeContainer) ProvideContentFS(fs.FS, string) {}
+
+func (c *fakeContainer) EnableStaticContent(staticContentDir string) { c.staticDir = staticContentDir }
+
+func (c *fakeContainer) AddRouteWithOptions(path string, _ http.HandlerFunc, options *spi.HttpHandlerOptions) {
+	if c.routes == nil {
+		c.routes = make(map[string]*spi.HttpHandlerOptions)
+	}
+
+	c.routes[path] = options
+}
+
+func (c *fakeContainer) RegisterEntityRenderer(entityType reflect.Type, _ spi.EntityRendererFactory) {
+	c.rendererTypes = append(c.rendererTypes, entityType)
 }
 
 func (c *fakeContainer) RegisterEntity(
@@ -312,7 +337,7 @@ func TestDiscovery_ReannouncementWithNoChangeIsSilent(t *testing.T) {
 
 func TestDoor_FirstReportEstablishesPositionAndLaterOnesChangeIt(t *testing.T) {
 	f := newFixture(t)
-	f.registry.HandleConnected("garage1")
+	f.registry.HandleConnected("garage1", "10.0.0.1")
 	f.advance(time.Second)
 	f.discover("garage1", "binary_sensor", "door", doorConfig("garage1", "door", "Door"))
 
@@ -402,7 +427,7 @@ func TestDoor_ConnectivityFollowsTheDevice(t *testing.T) {
 	}
 
 	f.advance(time.Second)
-	f.registry.HandleConnected("garage1")
+	f.registry.HandleConnected("garage1", "10.0.0.1")
 
 	if got := door(); got.Connectivity != environment.ConnectivityOnline || !got.OnlineSince.Equal(f.clock) {
 		t.Fatalf("expected online, got %+v", got)
@@ -573,7 +598,7 @@ func TestShutdown_DeregistersEverythingAndIgnoresLaterMessages(t *testing.T) {
 
 	f.state("garage1", "garage1/sensor/temperature/state", "20")
 	f.discover("garage1", "binary_sensor", "door2", doorConfig("garage1", "door2", "Door 2"))
-	f.registry.HandleConnected("garage1")
+	f.registry.HandleConnected("garage1", "10.0.0.1")
 
 	if len(f.container.registrations) != 2 || len(f.container.broadcasts) != 0 {
 		t.Fatalf("activity after shutdown: %+v / %+v", f.container.registrations, f.container.broadcasts)
@@ -638,16 +663,16 @@ func TestDiscovery_TheCapturedDoorSensorWithoutADeviceClassIsIgnoredWithAHint(t 
 func TestConnectAndDisconnectAreLogged(t *testing.T) {
 	f := newFixture(t)
 
-	f.registry.HandleConnected("garagedoor1")
+	f.registry.HandleConnected("garagedoor1", "10.47.7.17")
 	f.registry.HandleDisconnected("garagedoor1")
 
-	if len(f.logs) != 2 || f.logs[0] != "garagedoor1: connected" || f.logs[1] != "garagedoor1: disconnected" {
+	if len(f.logs) != 2 || f.logs[0] != "garagedoor1: connected from 10.47.7.17" || f.logs[1] != "garagedoor1: disconnected" {
 		t.Fatalf("unexpected log lines %v", f.logs)
 	}
 
 	// After shutdown nothing is processed, and nothing is logged either.
 	f.registry.Shutdown()
-	f.registry.HandleConnected("garagedoor1")
+	f.registry.HandleConnected("garagedoor1", "10.47.7.17")
 
 	if len(f.logs) != 2 {
 		t.Fatalf("logged after shutdown: %v", f.logs)

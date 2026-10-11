@@ -42,6 +42,16 @@ type node struct {
 	onlineSince  time.Time
 	offlineSince time.Time
 
+	// address is the IP address the device last connected from, as the broker saw it.
+	address string
+
+	// info is what the device says about itself in the device block of what it announces (firmware version,
+	// model, ...). Empty until it has announced something.
+	info hadiscovery.Device
+
+	// lastMessage is when the device last sent anything at all.
+	lastMessage time.Time
+
 	// Keyed by the discovery object id.
 	temps  map[string]*temperatureChannel
 	humids map[string]*sensorChannel
@@ -96,16 +106,17 @@ func (r *registry) nodeFor(name string) *node {
 }
 
 // HandleConnected records that a device's session started.
-func (r *registry) HandleConnected(device string) {
+func (r *registry) HandleConnected(device string, address string) {
 	if r.stopped {
 		return
 	}
 
-	r.logf("%s: connected", device)
+	r.logf("%s: connected from %s", device, address)
 
 	n := r.nodeFor(device)
 	n.connected = true
 	n.onlineSince = r.now()
+	n.address = address
 
 	for _, ch := range n.doors {
 		r.updateDoorConnectivity(n, ch)
@@ -135,6 +146,8 @@ func (r *registry) HandleMessage(device string, topic string, payload []byte) {
 	if r.stopped {
 		return
 	}
+
+	r.nodeFor(device).lastMessage = r.now()
 
 	if _, isDiscovery := hadiscovery.ParseTopic(r.discoveryPrefix, topic); isDiscovery {
 		r.handleDiscovery(device, topic, payload)
@@ -202,6 +215,9 @@ func (r *registry) handleDiscovery(device string, topic string, payload []byte) 
 		r.removeChannel(n, key)
 		return
 	}
+
+	// Every entity of a device carries the same device block, including the ones PMAAS doesn't track.
+	n.info = mergeDeviceInfo(n.info, entity.Device)
 
 	// An entity that stops being usable on re-announcement (e.g. it gained a value template) must
 	// not linger with its old, now-wrong topics.
@@ -361,14 +377,7 @@ func (r *registry) removeChannel(n *node, key hadiscovery.Key) {
 // ESPHome names an entity relative to its device ("Temperature"), so on its own that would be
 // ambiguous across devices.
 func (r *registry) entityName(deviceName string, e hadiscovery.Entity) string {
-	label := r.displayNames[deviceName]
-	if label == "" {
-		label = e.Device.Name
-	}
-
-	if label == "" {
-		label = deviceName
-	}
+	label := r.deviceLabel(deviceName, e.Device.Name)
 
 	name := strings.TrimSpace(e.Name)
 
@@ -380,6 +389,47 @@ func (r *registry) entityName(deviceName string, e hadiscovery.Entity) string {
 	default:
 		return label + " " + name
 	}
+}
+
+// deviceLabel is what to call a device: the display name it was configured with, else the name it announces
+// for itself, else its ESPHome name.
+func (r *registry) deviceLabel(deviceName string, announcedName string) string {
+	if label := r.displayNames[deviceName]; label != "" {
+		return label
+	}
+
+	if announcedName != "" {
+		return announcedName
+	}
+
+	return deviceName
+}
+
+// mergeDeviceInfo returns current with every field that update has a value for taken from update. A
+// device announces the same block with each entity, but not every field with every one, so what's already
+// known isn't lost when one comes in without it.
+func mergeDeviceInfo(current hadiscovery.Device, update hadiscovery.Device) hadiscovery.Device {
+	if len(update.Identifiers) > 0 {
+		current.Identifiers = update.Identifiers
+	}
+
+	if update.Name != "" {
+		current.Name = update.Name
+	}
+
+	if update.Model != "" {
+		current.Model = update.Model
+	}
+
+	if update.Manufacturer != "" {
+		current.Manufacturer = update.Manufacturer
+	}
+
+	if update.SWVersion != "" {
+		current.SWVersion = update.SWVersion
+	}
+
+	return current
 }
 
 // --- thermometers ---
