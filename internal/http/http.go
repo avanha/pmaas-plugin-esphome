@@ -66,7 +66,7 @@ func (h *Handler) Init(container spi.IPMAASContainer, entityStore common.EntityS
 	container.AddRouteWithOptions(
 		"",
 		h.handleHttpListRequest,
-		&spi.HttpHandlerOptions{SupportsXsrfValidation: true, MenuLabel: "ESPHome", MenuIcon: "cpu"})
+		&spi.HttpHandlerOptions{SupportsXsrfValidation: true, MenuLabel: "ESPHome"})
 	container.RegisterEntityRenderer(
 		reflect.TypeOf((*data.PluginStatus)(nil)).Elem(),
 		h.rendererFactory(&statusTemplate, "esphome_status", func(entity any) (any, bool) {

@@ -118,6 +118,16 @@ type dropUnnamedBrokerWarnings struct {
 	slog.Handler
 }
 
+// WithAttrs and WithGroup have to wrap what they return, or the filter is lost: the broker derives its
+// loggers with With, which would otherwise hand back the bare handler underneath.
+func (h dropUnnamedBrokerWarnings) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return dropUnnamedBrokerWarnings{h.Handler.WithAttrs(attrs)}
+}
+
+func (h dropUnnamedBrokerWarnings) WithGroup(name string) slog.Handler {
+	return dropUnnamedBrokerWarnings{h.Handler.WithGroup(name)}
+}
+
 func (h dropUnnamedBrokerWarnings) Handle(ctx context.Context, record slog.Record) error {
 	if record.Message == "" {
 		return nil

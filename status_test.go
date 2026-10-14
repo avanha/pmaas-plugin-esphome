@@ -334,7 +334,7 @@ func TestInit_RegistersThePageAndTheRenderers(t *testing.T) {
 	p.Init(container)
 
 	page, ok := container.routes[""]
-	if !ok || page.MenuLabel != "ESPHome" || page.MenuIcon != "cpu" || !page.SupportsXsrfValidation {
+	if !ok || page.MenuLabel != "ESPHome" || page.MenuIcon != "" || !page.SupportsXsrfValidation {
 		t.Fatalf("unexpected page route %+v", page)
 	}
 

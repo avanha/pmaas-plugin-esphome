@@ -406,7 +406,8 @@ func TestBrokerLogger_DropsTheUnnamedConnectionWarningButKeepsTheRest(t *testing
 
 	defer func() { os.Stdout = original }()
 
-	logger := brokerLogger() // the logger writes to stdout as of creation
+	// The broker derives its loggers with With, so check the filter survives that too.
+	logger := brokerLogger().With("listener", "esphome").WithGroup("g") // the logger writes to stdout as of creation
 	logger.Warn("", "listener", "esphome", "error", io.EOF)
 	logger.Warn("something with a message of its own", "k", "v")
 	logger.Info("not shown: below warning level")
