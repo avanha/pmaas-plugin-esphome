@@ -11,6 +11,8 @@ import (
 func (p *plugin) getStatusAndEntities() common.StatusAndEntities {
 	thermometers := p.registry.thermometerViews()
 	doors := p.registry.doorSensorViews()
+	switches := p.registry.switchViews()
+	powers := p.registry.powerViews()
 
 	// Where the broker is listening once it has started, and until then where it's meant to.
 	listenAddress := p.listenAddress
@@ -19,14 +21,16 @@ func (p *plugin) getStatusAndEntities() common.StatusAndEntities {
 	}
 
 	status := data.PluginStatus{
-		BrokerRunning:    p.broker != nil,
-		BrokerProblem:    p.brokerProblem,
-		ListenAddress:    listenAddress,
-		DiscoveryPrefix:  p.config.DiscoveryPrefix,
-		CaptureMessages:  p.config.CaptureMessages,
-		ThermometerCount: len(thermometers),
-		DoorSensorCount:  len(doors),
-		Devices:          make([]data.DeviceStatus, 0, len(p.config.Devices)),
+		BrokerRunning:     p.broker != nil,
+		BrokerProblem:     p.brokerProblem,
+		ListenAddress:     listenAddress,
+		DiscoveryPrefix:   p.config.DiscoveryPrefix,
+		CaptureMessages:   p.config.CaptureMessages,
+		ThermometerCount:  len(thermometers),
+		DoorSensorCount:   len(doors),
+		SwitchCount:       len(switches),
+		PowerMonitorCount: len(powers),
+		Devices:           make([]data.DeviceStatus, 0, len(p.config.Devices)),
 	}
 
 	for _, configured := range p.config.Devices {
@@ -42,12 +46,16 @@ func (p *plugin) getStatusAndEntities() common.StatusAndEntities {
 		}
 	}
 
-	return common.StatusAndEntities{Status: status, Entities: orderEntities(thermometers, doors)}
+	return common.StatusAndEntities{Status: status, Entities: orderEntities(thermometers, doors, switches, powers)}
 }
 
-// orderEntities puts the entities in one list, grouped by device and then by name, with a device's
-// thermometers before its door sensors.
-func orderEntities(thermometers []data.ThermometerView, doors []data.DoorSensorView) []any {
+// orderEntities puts the entities in one list, grouped by device and then by kind (thermometers, door sensors,
+// switches, power), and by name within a kind. A plug's switch and its power reading therefore sit together.
+func orderEntities(
+	thermometers []data.ThermometerView,
+	doors []data.DoorSensorView,
+	switches []data.SwitchView,
+	powers []data.PowerView) []any {
 	type entry struct {
 		device string
 		kind   int
@@ -55,7 +63,7 @@ func orderEntities(thermometers []data.ThermometerView, doors []data.DoorSensorV
 		value  any
 	}
 
-	entries := make([]entry, 0, len(thermometers)+len(doors))
+	entries := make([]entry, 0, len(thermometers)+len(doors)+len(switches)+len(powers))
 
 	for i := range thermometers {
 		entries = append(entries, entry{thermometers[i].DeviceName, 0, thermometers[i].Name, &thermometers[i]})
@@ -63,6 +71,14 @@ func orderEntities(thermometers []data.ThermometerView, doors []data.DoorSensorV
 
 	for i := range doors {
 		entries = append(entries, entry{doors[i].DeviceName, 1, doors[i].Name, &doors[i]})
+	}
+
+	for i := range switches {
+		entries = append(entries, entry{switches[i].DeviceName, 2, switches[i].Name, &switches[i]})
+	}
+
+	for i := range powers {
+		entries = append(entries, entry{powers[i].DeviceName, 3, powers[i].Name, &powers[i]})
 	}
 
 	sort.Slice(entries, func(i, j int) bool {

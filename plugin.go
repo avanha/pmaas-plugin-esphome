@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/avanha/pmaas-common/mailbox"
 	"github.com/avanha/pmaas-plugin-esphome/internal/broker"
 	httphandler "github.com/avanha/pmaas-plugin-esphome/internal/http"
 	spi "github.com/avanha/pmaas-spi"
@@ -17,10 +18,13 @@ type Plugin interface {
 }
 
 type plugin struct {
-	config      PluginConfig
-	container   spi.IPMAASContainer
-	registry    *registry
-	broker      *broker.Broker
+	config    PluginConfig
+	container spi.IPMAASContainer
+	registry  *registry
+	broker    *broker.Broker
+	// outbox carries commands to the broker, so that the plugin goroutine never waits on it. It's started
+	// with the broker and stopped just before it's closed.
+	outbox      *mailbox.Outbox
 	httpHandler *httphandler.Handler
 
 	// listenAddress is where the broker is listening, or was configured to; brokerProblem is why it isn't
@@ -43,6 +47,7 @@ func (p *plugin) ShortName() string {
 func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.container = container
 	p.registry = newRegistry(container, p.config.DiscoveryPrefix, p.config.displayNames())
+	p.registry.publish = p.publishCommand
 	p.httpHandler.Init(container, &entityStoreAdapter{parent: p})
 }
 
@@ -67,6 +72,7 @@ func (p *plugin) Start() {
 	}
 
 	p.broker = mqttBroker
+	p.outbox = mailbox.NewOutbox()
 	p.listenAddress = address.String()
 
 	fmt.Printf("%T MQTT broker listening on %s for %d device(s)\n", *p, address, len(p.config.Devices))
@@ -99,6 +105,23 @@ func (p *plugin) startBroker() (*broker.Broker, net.Addr, error) {
 	}
 
 	return mqttBroker, listener.Addr(), nil
+}
+
+// publishCommand queues a message for the broker to publish, to a device that's subscribed to the topic. It
+// runs on the plugin goroutine and returns at once, with an error only if there's nothing to publish with:
+// delivery happens on the outbox's goroutine, where a failure is logged, since by then nobody is waiting.
+func (p *plugin) publishCommand(topic string, payload []byte) error {
+	if p.broker == nil || p.outbox == nil {
+		return errBrokerNotRunning
+	}
+
+	mqttBroker := p.broker
+
+	return p.outbox.Post(func() {
+		if err := mqttBroker.Publish(topic, payload, false); err != nil {
+			fmt.Printf("esphome: unable to publish a command to %s: %v\n", topic, err)
+		}
+	})
 }
 
 // brokerLogger is where the broker reports what it refuses: a device that fails to authenticate, or touches
@@ -177,9 +200,12 @@ func (p *plugin) Stop() chan func() {
 	// state owned by this goroutine and doesn't wait on anything, so it's safe to do right here.
 	p.registry.Shutdown()
 
-	// Take the broker out of the plugin's state, so that closing it is the job of exactly one place.
+	// Take the broker and its outbox out of the plugin's state, so that closing them is the job of exactly one
+	// place. With the broker gone, nothing more is queued: publishCommand fails instead.
 	broker := p.broker
 	p.broker = nil
+	commands := p.outbox
+	p.outbox = nil
 
 	// The broker never started (nothing was configured, or startup failed), so there's nothing to
 	// wait for.
@@ -195,6 +221,10 @@ func (p *plugin) Stop() chan func() {
 
 	go func() {
 		defer close(done)
+
+		// Hand the commands already queued to the broker first, while it's still there to take them. That's all
+		// that's promised: the broker may close a device's connection before the message reaches it.
+		commands.Stop()
 
 		if err := broker.Close(); err != nil {
 			fmt.Printf("%T error closing the MQTT broker: %v\n", *p, err)

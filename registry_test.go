@@ -43,6 +43,7 @@ type fakeContainer struct {
 
 	// What Init registers for the status page.
 	routes        map[string]*spi.HttpHandlerOptions
+	jsonRoutes    map[string]spi.JsonHandlerFunc
 	rendererTypes []reflect.Type
 	staticDir     string
 }
@@ -57,6 +58,14 @@ func (c *fakeContainer) AddRouteWithOptions(path string, _ http.HandlerFunc, opt
 	}
 
 	c.routes[path] = options
+}
+
+func (c *fakeContainer) AddJsonRoute(path string, _ spi.RequestObjectFactoryFunc, handler spi.JsonHandlerFunc) {
+	if c.jsonRoutes == nil {
+		c.jsonRoutes = make(map[string]spi.JsonHandlerFunc)
+	}
+
+	c.jsonRoutes[path] = handler
 }
 
 func (c *fakeContainer) RegisterEntityRenderer(entityType reflect.Type, _ spi.EntityRendererFactory) {
@@ -528,7 +537,8 @@ func TestDiscovery_UnusableEntitiesAreIgnoredAndRemovedIfPreviouslyUsable(t *tes
 func TestDiscovery_UnsupportedEntitiesIgnored(t *testing.T) {
 	f := newFixture(t)
 
-	f.discover("garage1", "switch", "fan", `{"name":"Fan","state_topic":"garage1/switch/fan/state","command_topic":"garage1/switch/fan/command"}`)
+	f.discover("garage1", "fan", "fan", `{"name":"Fan","state_topic":"garage1/fan/fan/state","command_topic":"garage1/fan/fan/command"}`)
+	f.discover("garage1", "sensor", "co2", sensorConfig("garage1", "co2", "CO2", "carbon_dioxide", "ppm"))
 	f.discover("garage1", "sensor", "wifi", sensorConfig("garage1", "wifi", "WiFi", "signal_strength", "dBm"))
 	f.discover("garage1", "binary_sensor", "motion",
 		`{"name":"Motion","state_topic":"garage1/binary_sensor/motion/state","device_class":"motion"}`)
@@ -655,7 +665,7 @@ func TestDiscovery_TheCapturedDoorSensorWithoutADeviceClassIsIgnoredWithAHint(t 
 	}
 
 	if !strings.Contains(f.logs[1], "garage_esp_status_led") || strings.Contains(f.logs[1], "set device_class: garage_door") ||
-		!strings.Contains(f.logs[1], "temperature or humidity") {
+		!strings.Contains(f.logs[1], "switches, sensors with device_class temperature, humidity, power, voltage, current or energy") {
 		t.Errorf("the light's log line should list what is tracked, not suggest a door: %q", f.logs[1])
 	}
 }

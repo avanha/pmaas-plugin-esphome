@@ -4,8 +4,11 @@ A PMAAS plugin for [ESPHome](https://esphome.io) devices. It embeds an MQTT brok
 single executable: your ESP32s are configured in ESPHome YAML to connect to PMAAS, announce what they
 have, and publish their state. There is no custom firmware.
 
-**Status: phase 2 (read-only).** Thermometers and door position sensors work, and there is an **ESPHome**
-status page. Switches/relays and TLS are not done yet (see [Roadmap](#roadmap)).
+**Status: phase 2.** Thermometers, door position sensors, switches (relays and smart plugs, which can be turned
+on and off from PMAAS) and power monitoring work, and there is an **ESPHome** status page. The ESPHome native API
+(which stock Kauf and Athom firmware speak instead of MQTT) and TLS are not done yet (see [Roadmap](#roadmap)).
+
+Switches and power monitoring have been tested against a simulated device only, not yet real hardware.
 
 Verified on a real ESP32 running ESPHome 2026.8.0, with an SHT3x temperature and humidity sensor and a
 reed switch: the device connects and its entities are discovered; temperature and humidity reach the
@@ -21,9 +24,33 @@ setting it needs).
 | `sensor` with `device_class: humidity` | folded into the thermometer, if the device has exactly one temperature sensor | the same |
 | `binary_sensor` with `device_class: garage_door`, `door` or `opening` | a door sensor (`pmaas-spi/device`: `IDoorSensor`) | anything that subscribes to its events |
 
+| `switch` | a switch (`pmaas-spi/device`: `ISwitch`): on, off, or unknown, and a way to ask for either | anything that subscribes to its events, and the buttons on the status page |
+| `sensor` with `device_class: power`, `voltage`, `current` or `energy` | one **power monitor** per device (`device.IPowerMonitor`), carrying whichever of those the device has | the same |
+
 Anything else a device announces is logged and ignored. A door sensor reports `Open`, `Closed` or
 `Unknown`, when it last changed, and whether the device is currently connected; it broadcasts a
 `device.DoorPositionChangedEvent` when the position changes.
+
+## Switches
+
+A switch reports `On`, `Off` or `Unknown` (a switch that hasn't said yet isn't assumed to be off). Asking it to
+change, from the status page or through `ISwitch.SetState`, publishes to the switch's command topic and returns
+at once; the switch's state changes when the *device* reports it has, so a command that's ignored leaves it as
+it was. Asking is refused, with the reason, if the device is offline, didn't announce a command topic, or the
+broker isn't running.
+
+PMAAS publishes commands itself, with no ACL in the way, so it only ever does so to the device's own topics: an
+entity whose announced command topic is outside the device's tree (`<name>/...`) is refused, so one device can't
+make PMAAS command another.
+
+## Power monitors
+
+A device's power, voltage, current and energy sensors become one entity, with a flag for each reading saying
+whether the device has reported it: a device with no voltage sensor has no voltage, which isn't zero volts.
+Readings are converted to watts, volts, amps and kilowatt-hours whatever unit the device uses (`kW`, `mW`, `mV`,
+`mA`, `Wh` and `MWh` are understood; a sensor with any other unit is ignored and logged). If a device has two
+sensors of one kind the first by object id is used. What energy counts from (the device's lifetime, or since
+midnight) is up to the device.
 
 ## The status page
 
@@ -32,8 +59,9 @@ plugin owns. The status bar shows whether the broker is running (and why not, if
 how many of the configured devices are connected, how many thermometers and door sensors there are, and when
 a device last sent anything. Each device is listed with its address, firmware, model and MAC, and since when
 it has been connected or disconnected. Below that are the entities, grouped by device: thermometers (with
-humidity, if any), and door sensors (open/closed/unknown, when it last changed, and whether the device is
-offline, in which case the last known state is shown dimmed).
+humidity, if any), door sensors (open/closed/unknown, when it last changed, and whether the device is
+offline, in which case the last known state is shown dimmed), switches (state, with Turn on and Turn off buttons
+while the device is connected) and power monitors. A plug's switch and power sit together.
 
 ## How it works
 
@@ -197,10 +225,13 @@ func addEsphome(coreConfig *config.Config) {
 
 1. **Phase 1 (this):** broker with per-device authentication and ACLs, discovery parsing, thermometers
    and door sensors, connectivity, tests.
-2. **Phase 2 (status page and door sensor renderer done):** switches/relays (`ISwitch`, commands to the
-   device's `command_topic`) remain.
-3. **Later:** TLS (the ACME plugin's certificate), a Tasmota dialect for devices that can't run
-   ESPHome, signal strength as RSSI.
+2. **Phase 2 (done):** the status page, door sensor renderer, switches (`ISwitch`, commands to the device's
+   `command_topic`) and power monitoring.
+3. **Next:** the ESPHome native API as a second transport next to the MQTT broker, so stock firmware that has no
+   MQTT (Kauf and Athom plugs and relays) works without reflashing: mDNS discovery, adopting a device, Noise
+   encryption, and the entity mapping above shared by both transports.
+4. **Later:** BLE advertisements, TLS (the ACME plugin's certificate), a Tasmota dialect for devices that can't
+   run ESPHome, signal strength as RSSI.
 
 ## Not supported, on purpose
 

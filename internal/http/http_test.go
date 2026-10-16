@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"reflect"
 	"strings"
 	"testing"
 	"text/template"
@@ -222,6 +223,11 @@ func TestTemplates_EscapeEverythingThatComesFromOutside(t *testing.T) {
 			Name: hostile, DeviceName: attack, HasData: true, DeviceConnected: true,
 			Position: hostile, PositionClass: attack,
 		}),
+		"switch": render(t, switchTemplate, &data.SwitchView{
+			Name: hostile, DeviceName: attack, ObjectID: attack, HasData: true, DeviceConnected: true, CanControl: true,
+			State: hostile, StateClass: attack,
+		}),
+		"power": render(t, powerTemplate, &data.PowerView{Name: hostile, DeviceName: attack, HasData: true}),
 	}
 
 	for name, out := range outputs {
@@ -236,9 +242,24 @@ func TestTemplates_EscapeEverythingThatComesFromOutside(t *testing.T) {
 type fakeStore struct {
 	result common.StatusAndEntities
 	err    error
+
+	switchCalls []switchCall
+	switchErr   error
 }
 
 func (s *fakeStore) GetStatusAndEntities() (common.StatusAndEntities, error) { return s.result, s.err }
+
+type switchCall struct {
+	device string
+	object string
+	on     bool
+}
+
+func (s *fakeStore) SetSwitch(deviceName string, object string, on bool) error {
+	s.switchCalls = append(s.switchCalls, switchCall{deviceName, object, on})
+
+	return s.switchErr
+}
 
 type renderCall struct {
 	options  spi.RenderListOptions
@@ -319,5 +340,157 @@ func TestCelsiusToFahrenheit(t *testing.T) {
 		if got := celsiusToFahrenheit(c); got < want-0.01 || got > want+0.01 {
 			t.Errorf("celsiusToFahrenheit(%v) = %v, want %v", c, got, want)
 		}
+	}
+}
+
+func TestSwitchTemplate_EachState(t *testing.T) {
+	changed := time.Now().Add(-26 * time.Hour)
+
+	for _, c := range []struct {
+		state, class, icon      string
+		onDisabled, offDisabled bool
+	}{
+		{"On", "on", "bi-toggle-on", true, false},
+		{"Off", "off", "bi-toggle-off", false, true},
+		{"Unknown", "unknown", "bi-question-circle-fill", false, false},
+	} {
+		out := render(t, switchTemplate, &data.SwitchView{
+			Name: "Heater", DeviceName: "plug1", ObjectID: "relay", DeviceConnected: true, CanControl: true, HasData: true,
+			State: c.state, StateClass: c.class, LastChangeTime: changed, LastUpdateTime: time.Now(),
+		})
+
+		checkContains(t, out, []string{
+			`class="entity-esphome-switch ` + c.class + `"`, `data-device="plug1"`, `data-object="relay"`,
+			c.icon, `class="state ` + c.class + `">` + c.state, c.state + " since 1d 2h ago",
+		}, []string{"offline", "Waiting for data"})
+
+		// Asking for the state it's already in would do nothing, so that button is off.
+		on := strings.Contains(out, `data-on="true" disabled`)
+		off := strings.Contains(out, `data-on="false" disabled`)
+
+		if on != c.onDisabled || off != c.offDisabled {
+			t.Errorf("%s: turn-on disabled=%v (want %v), turn-off disabled=%v (want %v):\n%s",
+				c.state, on, c.onDisabled, off, c.offDisabled, out)
+		}
+	}
+}
+
+func TestSwitchTemplate_ControlsOnlyWhenTheyCanBeUsed(t *testing.T) {
+	out := render(t, switchTemplate, &data.SwitchView{Name: "S", DeviceConnected: true, CanControl: true, HasData: true, StateClass: "on", State: "On"})
+	checkContains(t, out, []string{"Turn on", "Turn off", "switch-button"}, nil)
+
+	out = render(t, switchTemplate, &data.SwitchView{Name: "S", DeviceConnected: true, HasData: true, StateClass: "on", State: "On"})
+	checkContains(t, out, nil, []string{"Turn on", "Turn off", "switch-button"})
+}
+
+func TestSwitchTemplate_WaitingAndOffline(t *testing.T) {
+	out := render(t, switchTemplate, &data.SwitchView{Name: "S", DeviceConnected: true, StateClass: "unknown", State: "Unknown"})
+	checkContains(t, out, []string{"Waiting for data"}, []string{"state-row", "offline"})
+
+	out = render(t, switchTemplate, &data.SwitchView{
+		Name: "S", HasData: true, State: "On", StateClass: "on", OfflineSince: time.Now().Add(-5 * time.Minute),
+	})
+	checkContains(t, out, []string{
+		"entity-esphome-switch on offline", "bi-wifi-off", "Device offline since 5m ago: last known state",
+	}, []string{"switch-button"})
+}
+
+func TestPowerTemplate_ShowsOnlyTheReadingsTheDeviceHas(t *testing.T) {
+	out := render(t, powerTemplate, &data.PowerView{
+		Name: "Heater Power", DeviceName: "plug1", DeviceConnected: true, HasData: true,
+		HasPower: true, Power: 1500.25, HasEnergy: true, Energy: 12.3456, LastUpdateTime: time.Now().Add(-2 * time.Minute),
+	})
+
+	checkContains(t, out,
+		[]string{"Heater Power", "1500.2 W", "12.346 kWh", "2m ago", "plug1"},
+		[]string{" V<", " A<", "offline", "Waiting for data"})
+
+	out = render(t, powerTemplate, &data.PowerView{
+		Name: "P", DeviceConnected: true, HasData: true, HasVoltage: true, Voltage: 121.34, HasCurrent: true, Current: 0.5,
+	})
+	checkContains(t, out, []string{"121.3 V", "0.500 A"}, []string{" W<", "kWh"})
+}
+
+func TestPowerTemplate_ZeroIsAReadingAndAbsenceIsNot(t *testing.T) {
+	out := render(t, powerTemplate, &data.PowerView{Name: "P", DeviceConnected: true, HasData: true, HasPower: true})
+	checkContains(t, out, []string{"0.0 W"}, nil)
+
+	out = render(t, powerTemplate, &data.PowerView{Name: "P", DeviceConnected: true, HasData: true, HasVoltage: true, Voltage: 120})
+	checkContains(t, out, nil, []string{"0.0 W"})
+}
+
+func TestPowerTemplate_WaitingAndOffline(t *testing.T) {
+	out := render(t, powerTemplate, &data.PowerView{Name: "P", DeviceConnected: true})
+	checkContains(t, out, []string{"Waiting for data"}, []string{"readings", "offline"})
+
+	out = render(t, powerTemplate, &data.PowerView{Name: "P", HasData: true, HasPower: true, Power: 5})
+	checkContains(t, out, []string{"entity-esphome-power offline", "bi-wifi-off", "Device offline: last known readings"}, nil)
+}
+
+func TestStatusTemplate_CountsSwitchesAndPowerMonitors(t *testing.T) {
+	out := strings.Join(strings.Fields(render(t, statusTemplate, &data.PluginStatus{SwitchCount: 1, PowerMonitorCount: 2})), " ")
+	checkContains(t, out, []string{"1 switch,", "2 power monitors"}, []string{"1 switches"})
+
+	out = strings.Join(strings.Fields(render(t, statusTemplate, &data.PluginStatus{SwitchCount: 3, PowerMonitorCount: 1})), " ")
+	checkContains(t, out, []string{"3 switches,", "1 power monitor"}, []string{"1 power monitors"})
+}
+
+func switchRequestFor(method string) *http.Request {
+	return httptest.NewRequest(method, "/plugins/esphome/switch", nil)
+}
+
+func TestHandleHttpSwitchRequest_PassesTheRequestOn(t *testing.T) {
+	store := &fakeStore{}
+	h := &Handler{entityStore: store}
+
+	for _, on := range []bool{true, false} {
+		response, err := h.handleHttpSwitchRequest(nil, switchRequestFor("POST"), &switchRequest{Device: "plug1", Object: "relay", On: on})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got, ok := response.(switchResponse); !ok || got.Requested != on {
+			t.Fatalf("unexpected response %#v", response)
+		}
+	}
+
+	want := []switchCall{{"plug1", "relay", true}, {"plug1", "relay", false}}
+	if !reflect.DeepEqual(store.switchCalls, want) {
+		t.Fatalf("calls %+v, want %+v", store.switchCalls, want)
+	}
+}
+
+func TestHandleHttpSwitchRequest_RefusesWhatItShouldNot(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		method  string
+		request any
+	}{
+		{"a GET", "GET", &switchRequest{Device: "plug1", Object: "relay"}},
+		{"no device", "POST", &switchRequest{Object: "relay"}},
+		{"no switch", "POST", &switchRequest{Device: "plug1"}},
+		{"not the request type", "POST", "something else"},
+		{"nothing", "POST", nil},
+	} {
+		store := &fakeStore{}
+		h := &Handler{entityStore: store}
+
+		if _, err := h.handleHttpSwitchRequest(nil, switchRequestFor(c.method), c.request); err == nil {
+			t.Errorf("%s: expected an error", c.name)
+		}
+
+		if len(store.switchCalls) != 0 {
+			t.Errorf("%s: the switch was commanded: %+v", c.name, store.switchCalls)
+		}
+	}
+}
+
+func TestHandleHttpSwitchRequest_ReportsWhyItCouldNotBeSent(t *testing.T) {
+	store := &fakeStore{switchErr: errors.New("the device is offline")}
+	h := &Handler{entityStore: store}
+
+	_, err := h.handleHttpSwitchRequest(nil, switchRequestFor("POST"), &switchRequest{Device: "plug1", Object: "relay", On: true})
+	if err == nil || !strings.Contains(err.Error(), "the device is offline") {
+		t.Fatalf("got %v", err)
 	}
 }

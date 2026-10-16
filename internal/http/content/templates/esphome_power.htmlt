@@ -1,0 +1,23 @@
+<div class="entity-esphome-power{{if not .DeviceConnected}} offline{{end}}">
+    <div class="title-row">
+        <div class="name">{{.Name | html}}</div>
+        {{if not .DeviceConnected}}
+            <i class="bi bi-wifi-off offline-icon" title="The device is offline, so these are its last readings"></i>
+        {{end}}
+    </div>
+    {{if not .HasData}}
+        <div class="waiting">Waiting for data</div>
+    {{else}}
+        <div class="readings">
+            {{if .HasPower}}<div class="power"><i class="bi bi-lightning-charge-fill"></i> {{printf "%.1f" .Power}} W</div>{{end}}
+            {{if .HasVoltage}}<div class="voltage">{{printf "%.1f" .Voltage}} V</div>{{end}}
+            {{if .HasCurrent}}<div class="current">{{printf "%.3f" .Current}} A</div>{{end}}
+            {{if .HasEnergy}}<div class="energy">{{printf "%.3f" .Energy}} kWh</div>{{end}}
+        </div>
+        <div class="timestamp"><i class="bi bi-stopwatch"></i> {{RelativeTime .LastUpdateTime}}</div>
+    {{end}}
+    {{if not .DeviceConnected}}
+        <div class="offline-note">Device offline: last known readings</div>
+    {{end}}
+    <div class="device-note">{{.DeviceName | html}}</div>
+</div>

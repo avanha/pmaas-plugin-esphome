@@ -1,11 +1,13 @@
 package esphome
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/avanha/pmaas-plugin-esphome/data"
+	"github.com/avanha/pmaas-spi/device"
 	"github.com/avanha/pmaas-spi/environment"
 )
 
@@ -71,6 +73,16 @@ func (r *registry) deviceStatus(name string) data.DeviceStatus {
 		if ch.door != nil {
 			status.EntityCount++
 		}
+	}
+
+	for _, ch := range n.switches {
+		if ch.sw != nil {
+			status.EntityCount++
+		}
+	}
+
+	if n.power != nil {
+		status.EntityCount++
 	}
 
 	return status
@@ -148,4 +160,93 @@ func (r *registry) doorSensorViews() []data.DoorSensorView {
 	})
 
 	return views
+}
+
+func (r *registry) switchViews() []data.SwitchView {
+	var views []data.SwitchView
+
+	for _, n := range r.nodes {
+		for objectID, ch := range n.switches {
+			if ch.sw == nil {
+				continue
+			}
+
+			sw := ch.sw.Data
+			connected := sw.Connectivity == environment.ConnectivityOnline
+
+			views = append(views, data.SwitchView{
+				Name:            sw.Name,
+				DeviceName:      n.name,
+				ObjectID:        objectID,
+				DeviceConnected: connected,
+				CanControl:      connected && ch.disc.CommandTopic != "",
+				HasData:         sw.HasData,
+				State:           sw.State.String(),
+				StateClass:      strings.ToLower(sw.State.String()),
+				LastChangeTime:  sw.LastChangeTime,
+				LastUpdateTime:  sw.LastUpdateTime,
+				OfflineSince:    sw.OfflineSince,
+				OnlineSince:     sw.OnlineSince,
+			})
+		}
+	}
+
+	sort.Slice(views, func(i, j int) bool {
+		if views[i].DeviceName != views[j].DeviceName {
+			return views[i].DeviceName < views[j].DeviceName
+		}
+
+		return views[i].Name < views[j].Name
+	})
+
+	return views
+}
+
+func (r *registry) powerViews() []data.PowerView {
+	var views []data.PowerView
+
+	for _, n := range r.nodes {
+		if n.power == nil {
+			continue
+		}
+
+		p := n.power.Data
+
+		views = append(views, data.PowerView{
+			Name:            p.Name,
+			DeviceName:      n.name,
+			DeviceConnected: p.Connectivity == environment.ConnectivityOnline,
+			HasData:         p.HasData,
+			HasPower:        p.HasPower,
+			Power:           p.Power,
+			HasVoltage:      p.HasVoltage,
+			Voltage:         p.Voltage,
+			HasCurrent:      p.HasCurrent,
+			Current:         p.Current,
+			HasEnergy:       p.HasEnergy,
+			Energy:          p.Energy,
+			LastUpdateTime:  p.LastUpdateTime,
+			OfflineSince:    p.OfflineSince,
+			OnlineSince:     p.OnlineSince,
+		})
+	}
+
+	sort.Slice(views, func(i, j int) bool { return views[i].DeviceName < views[j].DeviceName })
+
+	return views
+}
+
+// setSwitch asks the switch the device calls objectID to go to state. Runs on the plugin goroutine.
+func (r *registry) setSwitch(deviceName string, objectID string, state device.SwitchState) error {
+	n, ok := r.nodes[deviceName]
+	if !ok {
+		return fmt.Errorf("there's no device called %q", deviceName)
+	}
+
+	ch, ok := n.switches[objectID]
+	if !ok || ch.sw == nil {
+		return fmt.Errorf("%s has no switch called %q", deviceName, objectID)
+	}
+
+	return ch.sw.SetState(state)
 }

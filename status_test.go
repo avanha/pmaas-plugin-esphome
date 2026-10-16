@@ -345,13 +345,18 @@ func TestInit_RegistersThePageAndTheRenderers(t *testing.T) {
 
 	for _, want := range []reflect.Type{
 		reflect.TypeFor[data.PluginStatus](), reflect.TypeFor[data.ThermometerView](), reflect.TypeFor[data.DoorSensorView](),
+		reflect.TypeFor[data.SwitchView](), reflect.TypeFor[data.PowerView](),
 	} {
 		if !got[want] {
 			t.Errorf("no renderer registered for %v", want)
 		}
 	}
 
-	if len(container.rendererTypes) != 3 || container.staticDir != "static" {
+	if container.jsonRoutes["switch"] == nil {
+		t.Error("no route registered to turn a switch on and off")
+	}
+
+	if len(container.rendererTypes) != 5 || container.staticDir != "static" {
 		t.Errorf("unexpected registrations: %v, static %q", container.rendererTypes, container.staticDir)
 	}
 }

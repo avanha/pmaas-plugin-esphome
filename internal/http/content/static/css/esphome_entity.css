@@ -1,14 +1,18 @@
-/* The cards for what the plugin tracks: thermometers and door sensors. */
+/* The cards for what the plugin tracks: thermometers, door sensors, switches and power monitors. */
 
 .entity-esphome-thermometer,
-.entity-esphome-door-sensor {
+.entity-esphome-door-sensor,
+.entity-esphome-switch,
+.entity-esphome-power {
     display: flex;
     flex-flow: column;
     gap: 3px;
 }
 
 .entity-esphome-thermometer .title-row,
-.entity-esphome-door-sensor .title-row {
+.entity-esphome-door-sensor .title-row,
+.entity-esphome-switch .title-row,
+.entity-esphome-power .title-row {
     display: flex;
     flex-flow: row nowrap;
     align-items: center;
@@ -17,24 +21,32 @@
 }
 
 .entity-esphome-thermometer .name,
-.entity-esphome-door-sensor .name {
+.entity-esphome-door-sensor .name,
+.entity-esphome-switch .name,
+.entity-esphome-power .name {
     font-weight: bold;
     overflow-wrap: anywhere;
 }
 
 .entity-esphome-thermometer .offline-icon,
-.entity-esphome-door-sensor .offline-icon {
+.entity-esphome-door-sensor .offline-icon,
+.entity-esphome-switch .offline-icon,
+.entity-esphome-power .offline-icon {
     color: #d9534f;
 }
 
 /* What an offline device last said is still shown, but visibly stepped back. */
 .entity-esphome-thermometer.offline .reading,
-.entity-esphome-door-sensor.offline .position-row {
+.entity-esphome-door-sensor.offline .position-row,
+.entity-esphome-switch.offline .state-row,
+.entity-esphome-power.offline .readings {
     opacity: 0.55;
 }
 
 .entity-esphome-thermometer .waiting,
-.entity-esphome-door-sensor .waiting {
+.entity-esphome-door-sensor .waiting,
+.entity-esphome-switch .waiting,
+.entity-esphome-power .waiting {
     opacity: 0.8;
 }
 
@@ -84,19 +96,84 @@
 }
 
 .entity-esphome-thermometer .timestamp,
-.entity-esphome-door-sensor .timestamp {
+.entity-esphome-door-sensor .timestamp,
+.entity-esphome-switch .timestamp,
+.entity-esphome-power .timestamp {
     font-size: 0.9em;
     opacity: 0.8;
 }
 
 .entity-esphome-thermometer .offline-note,
-.entity-esphome-door-sensor .offline-note {
+.entity-esphome-door-sensor .offline-note,
+.entity-esphome-switch .offline-note,
+.entity-esphome-power .offline-note {
     font-size: 0.9em;
     color: #d9534f;
 }
 
 .entity-esphome-thermometer .device-note,
-.entity-esphome-door-sensor .device-note {
+.entity-esphome-door-sensor .device-note,
+.entity-esphome-switch .device-note,
+.entity-esphome-power .device-note {
     font-size: 0.8em;
     opacity: 0.55;
+}
+
+.entity-esphome-switch .state-row {
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.entity-esphome-switch .switch-icon {
+    font-size: 1.8em;
+}
+
+.entity-esphome-switch .state {
+    font-size: 1.3em;
+    font-weight: bold;
+}
+
+/* On is the state with something going on, so it's the colour; off is calm. */
+.entity-esphome-switch .on {
+    color: #5cb85c;
+}
+
+.entity-esphome-switch .off {
+    color: #888888;
+}
+
+.entity-esphome-switch .unknown {
+    color: #888888;
+}
+
+.entity-esphome-switch .controls {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.entity-esphome-switch .switch-error {
+    font-size: 0.9em;
+    color: #d9534f;
+}
+
+.entity-esphome-power .readings {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: baseline;
+    gap: 2px 12px;
+}
+
+.entity-esphome-power .power {
+    font-size: 1.4em;
+    font-weight: bold;
+}
+
+.entity-esphome-power .voltage,
+.entity-esphome-power .current,
+.entity-esphome-power .energy {
+    opacity: 0.8;
 }

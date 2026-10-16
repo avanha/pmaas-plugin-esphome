@@ -26,8 +26,10 @@ type PluginStatus struct {
 	// ConnectedDevices is how many of Devices are connected right now.
 	ConnectedDevices int
 
-	ThermometerCount int
-	DoorSensorCount  int
+	ThermometerCount  int
+	DoorSensorCount   int
+	SwitchCount       int
+	PowerMonitorCount int
 
 	// LastMessageTime is when any device last sent anything. Zero if none has.
 	LastMessageTime time.Time
@@ -99,6 +101,62 @@ type DoorSensorView struct {
 	// first report establishes the position without being a change). LastUpdateTime is when it was last
 	// reported, changed or not.
 	LastChangeTime time.Time
+	LastUpdateTime time.Time
+
+	OfflineSince time.Time
+	OnlineSince  time.Time
+}
+
+// SwitchView is a switch (a relay, a smart plug) as the page shows it.
+type SwitchView struct {
+	Name       string
+	DeviceName string
+
+	// ObjectID is what the device calls the switch, which with DeviceName is how the page says which one to
+	// turn on or off.
+	ObjectID string
+
+	DeviceConnected bool
+
+	// CanControl is whether the page should offer to turn it on or off: the device is connected, and has said
+	// where to send the command.
+	CanControl bool
+
+	// HasData is whether a state has been reported at all. State is "On", "Off" or "Unknown", and StateClass
+	// the same in lower case, which is also the CSS class that colours it.
+	HasData    bool
+	State      string
+	StateClass string
+
+	// LastChangeTime is when the state last changed, which is zero until a change has been seen (the first
+	// report establishes the state without being a change). LastUpdateTime is when it was last reported,
+	// changed or not.
+	LastChangeTime time.Time
+	LastUpdateTime time.Time
+
+	OfflineSince time.Time
+	OnlineSince  time.Time
+}
+
+// PowerView is a device's power monitor as the page shows it: whichever of the readings the device has.
+type PowerView struct {
+	Name       string
+	DeviceName string
+
+	DeviceConnected bool
+
+	// HasData is whether any reading has been reported. Each reading is only meaningful if its Has flag is
+	// set: a device without a voltage sensor has no voltage, which isn't zero volts.
+	HasData    bool
+	HasPower   bool
+	Power      float64 // watts
+	HasVoltage bool
+	Voltage    float64 // volts
+	HasCurrent bool
+	Current    float64 // amps
+	HasEnergy  bool
+	Energy     float64 // kilowatt-hours
+
 	LastUpdateTime time.Time
 
 	OfflineSince time.Time

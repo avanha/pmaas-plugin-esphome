@@ -31,6 +31,10 @@ type registry struct {
 	nodes   map[string]*node
 	stopped bool
 
+	// publish sends a command to a device, by publishing to one of its topics. It returns once the message is
+	// queued, not once it's delivered. The plugin sets it once there's a broker to publish with.
+	publish func(topic string, payload []byte) error
+
 	logf func(format string, args ...any)
 	now  func() time.Time
 }
@@ -56,6 +60,13 @@ type node struct {
 	temps  map[string]*temperatureChannel
 	humids map[string]*sensorChannel
 	doors  map[string]*doorChannel
+
+	switches     map[string]*switchChannel
+	powerSensors map[string]*powerSensorChannel
+
+	// power is the device's power monitor: one entity for all its power, voltage, current and energy sensors,
+	// registered when the first of them is announced and deregistered when the last is gone.
+	power *entities.PowerMonitor
 }
 
 // sensorChannel is a discovered numeric sensor and its latest reading.
@@ -98,6 +109,9 @@ func (r *registry) nodeFor(name string) *node {
 			temps:  make(map[string]*temperatureChannel),
 			humids: make(map[string]*sensorChannel),
 			doors:  make(map[string]*doorChannel),
+
+			switches:     make(map[string]*switchChannel),
+			powerSensors: make(map[string]*powerSensorChannel),
 		}
 		r.nodes[name] = n
 	}
@@ -118,9 +132,7 @@ func (r *registry) HandleConnected(device string, address string) {
 	n.onlineSince = r.now()
 	n.address = address
 
-	for _, ch := range n.doors {
-		r.updateDoorConnectivity(n, ch)
-	}
+	r.updateConnectivity(n)
 }
 
 // HandleDisconnected records that a device's session ended. Its entities stay registered, marked
@@ -136,9 +148,7 @@ func (r *registry) HandleDisconnected(device string) {
 	n.connected = false
 	n.offlineSince = r.now()
 
-	for _, ch := range n.doors {
-		r.updateDoorConnectivity(n, ch)
-	}
+	r.updateConnectivity(n)
 }
 
 // HandleMessage processes one message a device published.
@@ -176,6 +186,18 @@ func (r *registry) HandleMessage(device string, topic string, payload []byte) {
 			r.handleDoorState(n, ch, payload)
 		}
 	}
+
+	for _, ch := range n.switches {
+		if ch.disc.StateTopic == topic {
+			r.handleSwitchState(n, ch, payload)
+		}
+	}
+
+	for _, ch := range n.powerSensors {
+		if ch.disc.StateTopic == topic {
+			r.handlePowerSensorState(n, ch, payload)
+		}
+	}
 }
 
 // Shutdown deregisters every entity and ignores everything after.
@@ -190,6 +212,12 @@ func (r *registry) Shutdown() {
 		for _, ch := range n.doors {
 			r.deregisterDoor(ch)
 		}
+
+		for _, ch := range n.switches {
+			r.deregisterSwitch(ch)
+		}
+
+		r.deregisterPowerMonitor(n)
 	}
 
 	clear(r.nodes)
@@ -233,8 +261,12 @@ func (r *registry) handleDiscovery(device string, topic string, payload []byte) 
 		r.upsertTemperature(n, *entity)
 	case entity.Component == "sensor" && entity.DeviceClass == "humidity":
 		r.upsertHumidity(n, *entity)
+	case entity.Component == "sensor" && powerKindFor(entity.DeviceClass) != powerKindNone:
+		r.upsertPowerSensor(n, *entity)
 	case entity.Component == "binary_sensor" && isDoorClass(entity.DeviceClass):
 		r.upsertDoor(n, *entity)
+	case entity.Component == "switch":
+		r.upsertSwitch(n, *entity)
 	default:
 		r.logf("%s: ignoring unsupported %s %q (device_class %q): %s",
 			device, entity.Component, entity.ObjectID, entity.DeviceClass, unsupportedHint(*entity))
@@ -249,8 +281,8 @@ func unsupportedHint(e hadiscovery.Entity) string {
 		return "if it's a door, set device_class: garage_door (or door) on it in the device's YAML"
 	}
 
-	return "PMAAS tracks sensors with device_class temperature or humidity, and binary_sensors with device_class " +
-		"garage_door, door or opening"
+	return "PMAAS tracks switches, sensors with device_class temperature, humidity, power, voltage, current or " +
+		"energy, and binary_sensors with device_class garage_door, door or opening"
 }
 
 // unusable returns why e can't be tracked, or "" if it can.
@@ -263,6 +295,12 @@ func unusable(device string, e hadiscovery.Entity) string {
 	// state topics: a device can only be listened to on topics it's allowed to publish to.
 	if !strings.HasPrefix(e.StateTopic, device+"/") {
 		return fmt.Sprintf("state topic %q is outside the device's own topic tree", e.StateTopic)
+	}
+
+	// PMAAS publishes to a command topic itself, with no ACL in the way, so a device mustn't be able to point
+	// one at another device's topics.
+	if e.CommandTopic != "" && !strings.HasPrefix(e.CommandTopic, device+"/") {
+		return fmt.Sprintf("command topic %q is outside the device's own topic tree", e.CommandTopic)
 	}
 
 	if e.ValueTemplate != "" {
@@ -365,6 +403,21 @@ func (r *registry) removeChannel(n *node, key hadiscovery.Key) {
 
 		// Removing a sensor can change which humidity sensor belongs with which thermometer.
 		r.refreshThermometers(n)
+
+		if _, ok := n.powerSensors[key.ObjectID]; ok {
+			delete(n.powerSensors, key.ObjectID)
+
+			if len(n.powerSensors) == 0 {
+				r.deregisterPowerMonitor(n)
+			} else {
+				r.refreshPowerMonitor(n)
+			}
+		}
+	case "switch":
+		if ch, ok := n.switches[key.ObjectID]; ok {
+			r.deregisterSwitch(ch)
+			delete(n.switches, key.ObjectID)
+		}
 	case "binary_sensor":
 		if ch, ok := n.doors[key.ObjectID]; ok {
 			r.deregisterDoor(ch)
@@ -547,7 +600,7 @@ func parseNumber(payload []byte) (float32, bool) {
 func (r *registry) registerDoor(n *node, ch *doorChannel) {
 	d := &entities.Door{}
 	d.Data.Name = r.entityName(n.name, ch.disc)
-	r.applyConnectivity(n, &d.Data)
+	r.applyConnectivity(n, &d.Data.Connectivity, &d.Data.OnlineSince, &d.Data.OfflineSince)
 
 	id, err := r.container.RegisterEntity(
 		n.name+"/"+ch.disc.ObjectID,
@@ -576,16 +629,29 @@ func (r *registry) deregisterDoor(ch *doorChannel) {
 	ch.door = nil
 }
 
-// applyConnectivity copies the device's connectivity onto a door's data.
-func (r *registry) applyConnectivity(n *node, data *device.DoorSensor) {
-	data.OnlineSince = n.onlineSince
-	data.OfflineSince = n.offlineSince
+// applyConnectivity copies the device's connectivity into an entity's data.
+func (r *registry) applyConnectivity(n *node, connectivity *environment.Connectivity, onlineSince *time.Time, offlineSince *time.Time) {
+	*onlineSince = n.onlineSince
+	*offlineSince = n.offlineSince
 
 	if n.connected {
-		data.Connectivity = environment.ConnectivityOnline
+		*connectivity = environment.ConnectivityOnline
 	} else {
-		data.Connectivity = environment.ConnectivityOffline
+		*connectivity = environment.ConnectivityOffline
 	}
+}
+
+// updateConnectivity brings every entity of a device up to date with whether the device is connected.
+func (r *registry) updateConnectivity(n *node) {
+	for _, ch := range n.doors {
+		r.updateDoorConnectivity(n, ch)
+	}
+
+	for _, ch := range n.switches {
+		r.updateSwitchConnectivity(n, ch)
+	}
+
+	r.refreshPowerMonitor(n)
 }
 
 func (r *registry) updateDoorConnectivity(n *node, ch *doorChannel) {
@@ -593,7 +659,7 @@ func (r *registry) updateDoorConnectivity(n *node, ch *doorChannel) {
 		return
 	}
 
-	r.applyConnectivity(n, &ch.door.Data)
+	r.applyConnectivity(n, &ch.door.Data.Connectivity, &ch.door.Data.OnlineSince, &ch.door.Data.OfflineSince)
 	r.broadcastState(ch.door.PmaasEntityId, device.IDoorSensorType, ch.door.Data.Name, ch.door.Data)
 }
 

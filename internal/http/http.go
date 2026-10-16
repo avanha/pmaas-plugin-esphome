@@ -2,6 +2,7 @@ package http
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -36,6 +37,21 @@ var thermometerTemplate = spi.TemplateInfo{
 	Name:    "esphome_thermometer",
 	FuncMap: funcMap,
 	Paths:   []string{"templates/esphome_thermometer.htmlt"},
+	Styles:  []string{"css/esphome_entity.css"},
+}
+
+var switchTemplate = spi.TemplateInfo{
+	Name:    "esphome_switch",
+	FuncMap: funcMap,
+	Paths:   []string{"templates/esphome_switch.htmlt"},
+	Styles:  []string{"css/esphome_entity.css"},
+	Scripts: []string{"js/esphome_switch.js"},
+}
+
+var powerTemplate = spi.TemplateInfo{
+	Name:    "esphome_power",
+	FuncMap: funcMap,
+	Paths:   []string{"templates/esphome_power.htmlt"},
 	Styles:  []string{"css/esphome_entity.css"},
 }
 
@@ -79,6 +95,22 @@ func (h *Handler) Init(container spi.IPMAASContainer, entityStore common.EntityS
 			view, ok := entity.(*data.ThermometerView)
 			return view, ok
 		}))
+	container.AddJsonRoute(
+		"switch",
+		func() any { return &switchRequest{} },
+		h.handleHttpSwitchRequest)
+	container.RegisterEntityRenderer(
+		reflect.TypeOf((*data.SwitchView)(nil)).Elem(),
+		h.rendererFactory(&switchTemplate, "esphome_switch", func(entity any) (any, bool) {
+			view, ok := entity.(*data.SwitchView)
+			return view, ok
+		}))
+	container.RegisterEntityRenderer(
+		reflect.TypeOf((*data.PowerView)(nil)).Elem(),
+		h.rendererFactory(&powerTemplate, "esphome_power", func(entity any) (any, bool) {
+			view, ok := entity.(*data.PowerView)
+			return view, ok
+		}))
 	container.RegisterEntityRenderer(
 		reflect.TypeOf((*data.DoorSensorView)(nil)).Elem(),
 		h.rendererFactory(&doorSensorTemplate, "esphome_door_sensor", func(entity any) (any, bool) {
@@ -100,6 +132,39 @@ func (h *Handler) handleHttpListRequest(w http.ResponseWriter, r *http.Request) 
 		r,
 		spi.RenderListOptions{Title: "ESPHome Devices", Header: &result.Status},
 		result.Entities)
+}
+
+// switchRequest is what the switch card's button sends: which switch, and whether to turn it on or off.
+type switchRequest struct {
+	Device string
+	Object string
+	On     bool
+}
+
+type switchResponse struct {
+	// Requested says what was asked for. The switch itself changes when the device reports it has, which
+	// the page shows the next time it loads.
+	Requested bool
+}
+
+// handleHttpSwitchRequest turns a switch on or off. Like every JSON route it needs the XSRF cookie, which is
+// what keeps another site from making a visitor's browser flip a relay.
+func (h *Handler) handleHttpSwitchRequest(_ http.ResponseWriter, r *http.Request, request any) (any, error) {
+	if r.Method != http.MethodPost {
+		return nil, errors.New("method not allowed")
+	}
+
+	body, ok := request.(*switchRequest)
+
+	if !ok || body.Device == "" || body.Object == "" {
+		return nil, errors.New("a device and a switch are required")
+	}
+
+	if err := h.entityStore.SetSwitch(body.Device, body.Object, body.On); err != nil {
+		return nil, err
+	}
+
+	return switchResponse{Requested: body.On}, nil
 }
 
 // rendererFactory builds the factory for the renderer of one kind of item: it loads the template, and
