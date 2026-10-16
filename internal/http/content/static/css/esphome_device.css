@@ -1,0 +1,98 @@
+/* A device's card: what the device is and how it's connected, then what it has. */
+
+.entity-esphome-device {
+    display: flex;
+    flex-flow: column;
+    gap: 4px;
+    border-left: 5px solid #c8c8c8;
+    padding-left: 8px;
+    overflow-wrap: anywhere;
+}
+
+.entity-esphome-device.connected {
+    border-left-color: #5cb85c;
+}
+
+.entity-esphome-device.disconnected {
+    border-left-color: #d9534f;
+}
+
+.entity-esphome-device .ok {
+    color: #5cb85c;
+}
+
+.entity-esphome-device .bad {
+    color: #d9534f;
+}
+
+.entity-esphome-device .device-header {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+}
+
+.entity-esphome-device .device-header .name {
+    font-weight: bold;
+    font-size: 1.1em;
+}
+
+.entity-esphome-device .device-header .device-name {
+    opacity: 0.6;
+    font-size: 0.9em;
+}
+
+.entity-esphome-device .device-header .connection {
+    font-size: 0.9em;
+    opacity: 0.85;
+}
+
+.entity-esphome-device .transport {
+    font-size: 0.8em;
+    padding: 0 6px;
+    border: 1px solid #a19f9c;
+    border-radius: 8px;
+    opacity: 0.7;
+}
+
+/* A problem can be long: it wraps within the card. */
+.entity-esphome-device .problem {
+    color: #d9534f;
+    font-size: 0.9em;
+    overflow-wrap: anywhere;
+}
+
+/* Details sit under the header, each its own unit so they wrap rather than run out of the page. */
+.entity-esphome-device .device-details {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 2px 14px;
+    font-size: 0.9em;
+}
+
+.entity-esphome-device .device-details .label {
+    opacity: 0.7;
+}
+
+.entity-esphome-device .device-details .label::after {
+    content: ":";
+}
+
+/* What the device has: a block each, side by side where there's room and stacked where there isn't. */
+.entity-esphome-device .children {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 8px;
+    margin-top: 2px;
+}
+
+.entity-esphome-device .child {
+    border: 1px solid #c8c8c8;
+    border-radius: 3px;
+    padding: 5px 8px;
+    min-width: 160px;
+}
+
+.entity-esphome-device .none {
+    opacity: 0.8;
+}

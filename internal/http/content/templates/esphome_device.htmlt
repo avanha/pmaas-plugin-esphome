@@ -1,0 +1,44 @@
+<div class="entity-esphome-device{{if .Connected}} connected{{else}} disconnected{{end}}">
+    <div class="device-header">
+        {{if .Connected}}
+            <i class="bi bi-wifi connection-icon ok"></i>
+        {{else}}
+            <i class="bi bi-wifi-off connection-icon bad"></i>
+        {{end}}
+        <span class="name">{{.Label | html}}</span>
+        <span class="device-name">{{.Name | html}}</span>
+        {{if .Transport}}<span class="transport">{{.Transport | html}}</span>{{end}}
+        <span class="connection">
+            {{if .Connected}}
+                Connected {{RelativeTime .ConnectedSince}}
+            {{else if .DisconnectedSince.IsZero}}
+                Never connected
+            {{else}}
+                Disconnected {{RelativeTime .DisconnectedSince}}
+            {{end}}
+        </span>
+    </div>
+    {{if .Problem}}
+        <div class="problem wrap"><i class="bi bi-exclamation-triangle-fill"></i> {{.Problem | html}}</div>
+    {{end}}
+    <div class="device-details">
+        {{if .Address}}<span class="detail"><span class="label">Address</span> {{.Address | html}}</span>{{end}}
+        {{if .Firmware}}<span class="detail"><span class="label">Firmware</span> {{.Firmware | html}}</span>{{end}}
+        {{if .Model}}
+            <span class="detail">
+                <span class="label">Model</span> {{.Model | html}}{{if .Manufacturer}} ({{.Manufacturer | html}}){{end}}
+            </span>
+        {{end}}
+        {{if .MAC}}<span class="detail"><span class="label">MAC</span> {{.MAC | html}}</span>{{end}}
+        {{if not .LastMessageTime.IsZero}}
+            <span class="detail"><span class="label">Last message</span> {{RelativeTime .LastMessageTime}}</span>
+        {{end}}
+    </div>
+    <div class="children">
+        {{range .Children}}
+            <div class="child">{{RenderChild .}}</div>
+        {{else}}
+            <div class="none">Nothing it has is tracked{{if not .Connected}} yet{{end}}.</div>
+        {{end}}
+    </div>
+</div>
