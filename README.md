@@ -57,14 +57,24 @@ midnight) is up to the device.
 
 ## The status page
 
-The **ESPHome** entry in the menu opens a page like the other plugins': a status bar, then the entities the
-plugin owns. The status bar shows whether the broker is running (and why not, if it isn't), where it listens,
-how many of the configured devices are connected, how many thermometers and door sensors there are, and when
-a device last sent anything. Each device is listed with its address, firmware, model and MAC, and since when
-it has been connected or disconnected. Below that are the entities, grouped by device: thermometers (with
-humidity, if any), door sensors (open/closed/unknown, when it last changed, and whether the device is
-offline, in which case the last known state is shown dimmed), switches (state, with Turn on and Turn off buttons
-while the device is connected) and power monitors. A plug's switch and power sit together.
+The **ESPHome** entry in the menu opens a page like the other plugins': a status bar, then a card for each device.
+
+* **The status bar** shows whether the broker is running (and why not, if it should be, or that it isn't needed
+  when every device is on the native API), where it listens, how many of the configured devices are connected, how
+  many entities of each kind there are, and when a device last sent anything.
+* **A device's card** shows its name, how it's reached (MQTT or Native API), whether it's connected and since when,
+  and what it said about itself: address, firmware, model, MAC. If a native API device can't be reached, the reason
+  is on its card. Inside the card is everything of the device's that's tracked, each in a block of its own. A device
+  that has nothing tracked yet, or has never connected, still has its card.
+* **What's inside** is ordered by kind and then by name. Switches come first, then power monitors, door sensors and
+  thermometers, as set by the priorities in `childorder.go`: the higher the number the earlier, and a kind that isn't
+  listed comes after all that are, so a new kind appears at the end until someone decides where it belongs. To move a
+  kind up, raise its number; a negative one puts it below the unlisted.
+* **A switch** shows its state, and the toggle icon is the control: press it to ask for the other state. It's only a
+  picture while the device is offline or can't be commanded. The state changes when the device reports it, so the page
+  reloads a second after the request to show it. A thermometer shows its temperature and humidity, a door sensor its
+  position and for how long, and a power monitor the readings the device has. What an offline device last said is shown
+  dimmed.
 
 ## How it works
 

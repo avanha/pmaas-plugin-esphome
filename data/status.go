@@ -24,10 +24,9 @@ type PluginStatus struct {
 	// working out what a new kind of device sends.
 	CaptureMessages bool
 
-	// Devices has every configured device, whether or not it has ever connected, in the order configured.
-	Devices []DeviceStatus
-
-	// ConnectedDevices is how many of Devices are connected right now.
+	// DeviceCount is how many devices are configured, whether or not any has ever connected, and
+	// ConnectedDevices is how many of them are connected right now.
+	DeviceCount      int
 	ConnectedDevices int
 
 	ThermometerCount  int
@@ -37,6 +36,35 @@ type PluginStatus struct {
 
 	// LastMessageTime is when any device last sent anything. Zero if none has.
 	LastMessageTime time.Time
+}
+
+// Kinds of child a device has, which is how the page tells them apart, picks the template for each and orders them
+// (see the child priorities in the plugin).
+const (
+	KindSwitch       = "switch"
+	KindPowerMonitor = "power"
+	KindDoorSensor   = "door"
+	KindThermometer  = "thermometer"
+)
+
+// Child is something a device has that the page shows inside the device's card: a switch, a power monitor, a door
+// sensor, a thermometer. Each is a registered entity in its own right, as a network interface is in netmon, and the
+// device is what groups them for display.
+type Child interface {
+	// Kind is what sort of child it is: one of the Kind constants.
+	Kind() string
+
+	// SortKey orders children of the same kind, and must be different for each: it's the name and what the device
+	// calls the entity, since two can have the same name and the order mustn't change from one refresh to the next.
+	SortKey() string
+}
+
+// DeviceView is a device as the page shows it: its status, and everything of its that's tracked. The children are
+// ordered, with the more important kinds first.
+type DeviceView struct {
+	DeviceStatus
+
+	Children []Child
 }
 
 // DeviceStatus describes one configured device.
@@ -82,8 +110,14 @@ type DeviceStatus struct {
 
 // ThermometerView is a thermometer as the page shows it.
 type ThermometerView struct {
+	// Name is the entity's full name, as it's registered: the device's, then its own. ShortName is its own alone,
+	// for where the device is already on show, as it is for everything inside a device's card.
 	Name       string
+	ShortName  string
 	DeviceName string
+
+	// ObjectID is what the device calls the temperature sensor.
+	ObjectID string
 
 	// DeviceConnected is whether the device it belongs to is connected. A reading from a device that has
 	// since dropped off is the last one it took, not the current temperature, and the card says so.
@@ -99,7 +133,11 @@ type ThermometerView struct {
 // DoorSensorView is a door position sensor as the page shows it.
 type DoorSensorView struct {
 	Name       string
+	ShortName  string
 	DeviceName string
+
+	// ObjectID is what the device calls the binary sensor.
+	ObjectID string
 
 	DeviceConnected bool
 
@@ -122,6 +160,7 @@ type DoorSensorView struct {
 // SwitchView is a switch (a relay, a smart plug) as the page shows it.
 type SwitchView struct {
 	Name       string
+	ShortName  string
 	DeviceName string
 
 	// ObjectID is what the device calls the switch, which with DeviceName is how the page says which one to
@@ -153,6 +192,7 @@ type SwitchView struct {
 // PowerView is a device's power monitor as the page shows it: whichever of the readings the device has.
 type PowerView struct {
 	Name       string
+	ShortName  string
 	DeviceName string
 
 	DeviceConnected bool
@@ -174,3 +214,15 @@ type PowerView struct {
 	OfflineSince time.Time
 	OnlineSince  time.Time
 }
+
+func (ThermometerView) Kind() string { return KindThermometer }
+func (DoorSensorView) Kind() string  { return KindDoorSensor }
+func (SwitchView) Kind() string      { return KindSwitch }
+func (PowerView) Kind() string       { return KindPowerMonitor }
+
+func (v ThermometerView) SortKey() string { return v.Name + "\x00" + v.ObjectID }
+func (v DoorSensorView) SortKey() string  { return v.Name + "\x00" + v.ObjectID }
+func (v SwitchView) SortKey() string      { return v.Name + "\x00" + v.ObjectID }
+
+// SortKey of a PowerView is its name alone, since a device has one power monitor.
+func (v PowerView) SortKey() string { return v.Name }

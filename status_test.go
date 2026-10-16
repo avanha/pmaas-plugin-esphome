@@ -131,6 +131,35 @@ func TestDeviceStatus_AnIgnoredEntityStillTellsUsAboutTheDevice(t *testing.T) {
 	}
 }
 
+// deviceViews is the device cards in what getStatusAndEntities returns, which is all it returns.
+func deviceViews(t *testing.T, entities []any) []*data.DeviceView {
+	t.Helper()
+
+	views := make([]*data.DeviceView, 0, len(entities))
+
+	for _, entity := range entities {
+		view, ok := entity.(*data.DeviceView)
+		if !ok {
+			t.Fatalf("unexpected entity %T", entity)
+		}
+
+		views = append(views, view)
+	}
+
+	return views
+}
+
+// kinds is what a device has, in the order the card shows it.
+func kinds(device *data.DeviceView) string {
+	var kinds []string
+
+	for _, child := range device.Children {
+		kinds = append(kinds, child.Kind())
+	}
+
+	return strings.Join(kinds, ",")
+}
+
 func TestEntityViews(t *testing.T) {
 	f := newFixture(t)
 	f.registry.HandleConnected("garagedoor1", "10.47.7.17")
@@ -210,8 +239,7 @@ func TestEntityViews_AreOrderedAndOnlyIncludeWhatIsRegistered(t *testing.T) {
 	}
 }
 
-// The plugin's status: the broker, the devices in the order configured, and the entities of every device in one
-// list.
+// The plugin's status: the broker, and a card for each device, in the order configured, with what it has inside.
 func TestGetStatusAndEntities(t *testing.T) {
 	config := NewPluginConfig()
 	config.ListenAddress = "127.0.0.1:1883"
@@ -246,8 +274,10 @@ func TestGetStatusAndEntities(t *testing.T) {
 		t.Errorf("unexpected broker status %+v", status)
 	}
 
+	cards := deviceViews(t, got.Entities)
+
 	var devices []string
-	for _, d := range status.Devices {
+	for _, d := range cards {
 		devices = append(devices, d.Name)
 	}
 
@@ -255,28 +285,38 @@ func TestGetStatusAndEntities(t *testing.T) {
 		t.Errorf("devices should be in the order configured, got %v", devices)
 	}
 
-	if status.ConnectedDevices != 2 || status.ThermometerCount != 2 || status.DoorSensorCount != 2 ||
+	if status.DeviceCount != 3 || status.ConnectedDevices != 2 || status.ThermometerCount != 2 || status.DoorSensorCount != 2 ||
 		!status.LastMessageTime.Equal(f.clock) {
 		t.Errorf("unexpected counts or last message in %+v", status)
 	}
 
-	// One list, by device, with a device's thermometers before its door sensors.
-	var order []string
-
-	for _, entity := range got.Entities {
-		switch e := entity.(type) {
-		case *data.ThermometerView:
-			order = append(order, e.DeviceName+":thermometer")
-		case *data.DoorSensorView:
-			order = append(order, e.DeviceName+":door")
-		default:
-			t.Fatalf("unexpected entity %T", entity)
+	// Each device has its own: a door sensor first, then a thermometer, as the priorities have them. A device that
+	// has nothing is still there.
+	for i, want := range []string{"door,thermometer", "door,thermometer", ""} {
+		if got := kinds(cards[i]); got != want {
+			t.Errorf("%s has %q, want %q", cards[i].Name, got, want)
 		}
 	}
 
-	want := "garagedoor1:thermometer,garagedoor1:door,garagedoor2:thermometer,garagedoor2:door"
-	if strings.Join(order, ",") != want {
-		t.Errorf("got %v, want %s", order, want)
+	for _, card := range cards[:2] {
+		for _, child := range card.Children {
+			switch v := child.(type) {
+			case data.ThermometerView:
+				if v.DeviceName != card.Name {
+					t.Errorf("a thermometer of %s is in the card of %s", v.DeviceName, card.Name)
+				}
+			case data.DoorSensorView:
+				if v.DeviceName != card.Name {
+					t.Errorf("a door of %s is in the card of %s", v.DeviceName, card.Name)
+				}
+			default:
+				t.Errorf("unexpected child %T", child)
+			}
+		}
+	}
+
+	if cards[0].Transport != "MQTT" || cards[2].Connected {
+		t.Errorf("unexpected cards %+v %+v", cards[0].DeviceStatus, cards[2].DeviceStatus)
 	}
 }
 
@@ -318,7 +358,7 @@ func TestStart_ARunningBrokerReportsItsAddress(t *testing.T) {
 		status := p.getStatusAndEntities().Status
 
 		if !status.BrokerRunning || status.BrokerProblem != "" || status.ListenAddress != config.ListenAddress ||
-			len(status.Devices) != 1 || status.Devices[0].Connected {
+			status.DeviceCount != 1 || status.ConnectedDevices != 0 {
 			t.Errorf("unexpected status %+v", status)
 		}
 	})
@@ -338,25 +378,22 @@ func TestInit_RegistersThePageAndTheRenderers(t *testing.T) {
 		t.Fatalf("unexpected page route %+v", page)
 	}
 
-	got := map[reflect.Type]bool{}
+	// The status block, and the device card, which renders what's in it: the switch, power, door and thermometer
+	// are rendered by the card, not on their own.
+	names := map[string]bool{}
 	for _, entityType := range container.rendererTypes {
-		got[entityType] = true
+		names[entityType.Name()] = true
 	}
 
-	for _, want := range []reflect.Type{
-		reflect.TypeFor[data.PluginStatus](), reflect.TypeFor[data.ThermometerView](), reflect.TypeFor[data.DoorSensorView](),
-		reflect.TypeFor[data.SwitchView](), reflect.TypeFor[data.PowerView](),
-	} {
-		if !got[want] {
-			t.Errorf("no renderer registered for %v", want)
-		}
+	if !names["PluginStatus"] || !names["deviceWithChildren"] || len(container.rendererTypes) != 2 || container.staticDir != "static" {
+		t.Errorf("unexpected registrations: %v, static %q", container.rendererTypes, container.staticDir)
 	}
 
 	if container.jsonRoutes["switch"] == nil {
 		t.Error("no route registered to turn a switch on and off")
 	}
 
-	if len(container.rendererTypes) != 5 || container.staticDir != "static" {
+	if len(container.rendererTypes) != 2 || container.staticDir != "static" {
 		t.Errorf("unexpected registrations: %v, static %q", container.rendererTypes, container.staticDir)
 	}
 }
@@ -370,7 +407,7 @@ func TestEntityStoreAdapter_RunsOnThePluginGoroutine(t *testing.T) {
 
 	// Not on the plugin goroutine, as an HTTP request wouldn't be.
 	got, err := (&entityStoreAdapter{parent: p}).GetStatusAndEntities()
-	if err != nil || len(got.Status.Devices) != 1 || got.Status.Devices[0].Name != "garage1" {
+	if err != nil || got.Status.DeviceCount != 1 || len(got.Entities) != 1 || deviceViews(t, got.Entities)[0].Name != "garage1" {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 

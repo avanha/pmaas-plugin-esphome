@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/avanha/pmaas-plugin-esphome/data"
+	"github.com/avanha/pmaas-plugin-esphome/internal/hadiscovery"
 	"github.com/avanha/pmaas-spi/device"
 	"github.com/avanha/pmaas-spi/environment"
 )
@@ -88,30 +89,181 @@ func (r *registry) deviceStatus(name string) data.DeviceStatus {
 	return status
 }
 
-// thermometerViews and doorSensorViews describe every entity currently registered, ordered by device and then
-// name.
+// shortName is what an entity is called on its own, without the device it's on, for where the device is already on
+// show: the card of a device, which has its children inside it. It's worked out when it's wanted, from the same
+// things the full name is, so that there's nothing to keep up to date when the device renames something.
+//
+// It's the name the device gave the entity, without the device's name in front if it had that too. An entity that
+// has no name of its own, because it's the device's main entity (a plug's relay is named for the plug, or for the
+// plug without the end of its MAC address) is called by what it is, which is fallback.
+func (r *registry) shortName(deviceName string, e hadiscovery.Entity, fallback string) string {
+	label := r.deviceLabel(deviceName, e.Device.Name)
+	name := strings.TrimSpace(e.Name)
+	switch {
+	case isTheDeviceItself(name, label, e.Device.Name):
+		return fallback
+	case len(name) > len(label) && strings.EqualFold(name[:len(label)], label) && name[len(label)] == ' ':
+		return strings.TrimSpace(name[len(label)+1:])
+	default:
+		return name
+	}
+}
+
+// The views of what a device has, in no particular order. The ones that follow put them all in order, for the
+// whole plugin, and deviceView puts one device's in order, as the page shows them.
+
+func (r *registry) thermometerViewsOf(n *node) []data.ThermometerView {
+	var views []data.ThermometerView
+
+	for objectID, ch := range n.temps {
+		if ch.thermometer == nil {
+			continue
+		}
+
+		sensor := ch.thermometer.Data.SensorData
+
+		views = append(views, data.ThermometerView{
+			Name:            ch.thermometer.Data.Name,
+			ShortName:       r.shortName(n.name, ch.disc, "Temperature"),
+			DeviceName:      n.name,
+			ObjectID:        objectID,
+			DeviceConnected: n.connected,
+			HasData:         sensor.HasData,
+			Temperature:     sensor.Temperature,
+			HasHumidity:     sensor.HasHumidity,
+			Humidity:        sensor.Humidity,
+			LastUpdateTime:  sensor.LastUpdateTime,
+		})
+	}
+
+	return views
+}
+
+func (r *registry) doorSensorViewsOf(n *node) []data.DoorSensorView {
+	var views []data.DoorSensorView
+
+	for objectID, ch := range n.doors {
+		if ch.door == nil {
+			continue
+		}
+
+		door := ch.door.Data
+
+		views = append(views, data.DoorSensorView{
+			Name:            door.Name,
+			ShortName:       r.shortName(n.name, ch.disc, "Door"),
+			DeviceName:      n.name,
+			ObjectID:        objectID,
+			DeviceConnected: door.Connectivity == environment.ConnectivityOnline,
+			HasData:         door.HasData,
+			Position:        door.Position.String(),
+			PositionClass:   strings.ToLower(door.Position.String()),
+			LastChangeTime:  door.LastChangeTime,
+			LastUpdateTime:  door.LastUpdateTime,
+			OfflineSince:    door.OfflineSince,
+			OnlineSince:     door.OnlineSince,
+		})
+	}
+
+	return views
+}
+
+func (r *registry) switchViewsOf(n *node) []data.SwitchView {
+	var views []data.SwitchView
+
+	for objectID, ch := range n.switches {
+		if ch.sw == nil {
+			continue
+		}
+
+		sw := ch.sw.Data
+		connected := sw.Connectivity == environment.ConnectivityOnline
+
+		views = append(views, data.SwitchView{
+			Name:            sw.Name,
+			ShortName:       r.shortName(n.name, ch.disc, "Switch"),
+			DeviceName:      n.name,
+			ObjectID:        objectID,
+			DeviceConnected: connected,
+			CanControl:      connected && ch.commandable(),
+			HasData:         sw.HasData,
+			State:           sw.State.String(),
+			StateClass:      strings.ToLower(sw.State.String()),
+			LastChangeTime:  sw.LastChangeTime,
+			LastUpdateTime:  sw.LastUpdateTime,
+			OfflineSince:    sw.OfflineSince,
+			OnlineSince:     sw.OnlineSince,
+		})
+	}
+
+	return views
+}
+
+func (r *registry) powerViewsOf(n *node) []data.PowerView {
+	if n.power == nil {
+		return nil
+	}
+
+	p := n.power.Data
+
+	return []data.PowerView{{
+		Name:            p.Name,
+		ShortName:       "Power",
+		DeviceName:      n.name,
+		DeviceConnected: p.Connectivity == environment.ConnectivityOnline,
+		HasData:         p.HasData,
+		HasPower:        p.HasPower,
+		Power:           p.Power,
+		HasVoltage:      p.HasVoltage,
+		Voltage:         p.Voltage,
+		HasCurrent:      p.HasCurrent,
+		Current:         p.Current,
+		HasEnergy:       p.HasEnergy,
+		Energy:          p.Energy,
+		LastUpdateTime:  p.LastUpdateTime,
+		OfflineSince:    p.OfflineSince,
+		OnlineSince:     p.OnlineSince,
+	}}
+}
+
+// deviceView describes the configured device called name and everything of its that's tracked, with the children in
+// order. A device that has never connected has none, and shows as just its status.
+func (r *registry) deviceView(name string) *data.DeviceView {
+	view := &data.DeviceView{DeviceStatus: r.deviceStatus(name)}
+
+	n, ok := r.nodes[name]
+	if !ok {
+		return view
+	}
+
+	for _, v := range r.switchViewsOf(n) {
+		view.Children = append(view.Children, v)
+	}
+
+	for _, v := range r.powerViewsOf(n) {
+		view.Children = append(view.Children, v)
+	}
+
+	for _, v := range r.doorSensorViewsOf(n) {
+		view.Children = append(view.Children, v)
+	}
+
+	for _, v := range r.thermometerViewsOf(n) {
+		view.Children = append(view.Children, v)
+	}
+
+	sortChildren(view.Children)
+
+	return view
+}
+
+// The whole plugin's views of each kind, ordered by device and then name.
+
 func (r *registry) thermometerViews() []data.ThermometerView {
 	var views []data.ThermometerView
 
 	for _, n := range r.nodes {
-		for _, ch := range n.temps {
-			if ch.thermometer == nil {
-				continue
-			}
-
-			sensor := ch.thermometer.Data.SensorData
-
-			views = append(views, data.ThermometerView{
-				Name:            ch.thermometer.Data.Name,
-				DeviceName:      n.name,
-				DeviceConnected: n.connected,
-				HasData:         sensor.HasData,
-				Temperature:     sensor.Temperature,
-				HasHumidity:     sensor.HasHumidity,
-				Humidity:        sensor.Humidity,
-				LastUpdateTime:  sensor.LastUpdateTime,
-			})
-		}
+		views = append(views, r.thermometerViewsOf(n)...)
 	}
 
 	sort.Slice(views, func(i, j int) bool {
@@ -119,7 +271,7 @@ func (r *registry) thermometerViews() []data.ThermometerView {
 			return views[i].DeviceName < views[j].DeviceName
 		}
 
-		return views[i].Name < views[j].Name
+		return views[i].SortKey() < views[j].SortKey()
 	})
 
 	return views
@@ -129,26 +281,7 @@ func (r *registry) doorSensorViews() []data.DoorSensorView {
 	var views []data.DoorSensorView
 
 	for _, n := range r.nodes {
-		for _, ch := range n.doors {
-			if ch.door == nil {
-				continue
-			}
-
-			door := ch.door.Data
-
-			views = append(views, data.DoorSensorView{
-				Name:            door.Name,
-				DeviceName:      n.name,
-				DeviceConnected: door.Connectivity == environment.ConnectivityOnline,
-				HasData:         door.HasData,
-				Position:        door.Position.String(),
-				PositionClass:   strings.ToLower(door.Position.String()),
-				LastChangeTime:  door.LastChangeTime,
-				LastUpdateTime:  door.LastUpdateTime,
-				OfflineSince:    door.OfflineSince,
-				OnlineSince:     door.OnlineSince,
-			})
-		}
+		views = append(views, r.doorSensorViewsOf(n)...)
 	}
 
 	sort.Slice(views, func(i, j int) bool {
@@ -156,7 +289,7 @@ func (r *registry) doorSensorViews() []data.DoorSensorView {
 			return views[i].DeviceName < views[j].DeviceName
 		}
 
-		return views[i].Name < views[j].Name
+		return views[i].SortKey() < views[j].SortKey()
 	})
 
 	return views
@@ -166,29 +299,7 @@ func (r *registry) switchViews() []data.SwitchView {
 	var views []data.SwitchView
 
 	for _, n := range r.nodes {
-		for objectID, ch := range n.switches {
-			if ch.sw == nil {
-				continue
-			}
-
-			sw := ch.sw.Data
-			connected := sw.Connectivity == environment.ConnectivityOnline
-
-			views = append(views, data.SwitchView{
-				Name:            sw.Name,
-				DeviceName:      n.name,
-				ObjectID:        objectID,
-				DeviceConnected: connected,
-				CanControl:      connected && ch.commandable(),
-				HasData:         sw.HasData,
-				State:           sw.State.String(),
-				StateClass:      strings.ToLower(sw.State.String()),
-				LastChangeTime:  sw.LastChangeTime,
-				LastUpdateTime:  sw.LastUpdateTime,
-				OfflineSince:    sw.OfflineSince,
-				OnlineSince:     sw.OnlineSince,
-			})
-		}
+		views = append(views, r.switchViewsOf(n)...)
 	}
 
 	sort.Slice(views, func(i, j int) bool {
@@ -196,7 +307,7 @@ func (r *registry) switchViews() []data.SwitchView {
 			return views[i].DeviceName < views[j].DeviceName
 		}
 
-		return views[i].Name < views[j].Name
+		return views[i].SortKey() < views[j].SortKey()
 	})
 
 	return views
@@ -206,29 +317,7 @@ func (r *registry) powerViews() []data.PowerView {
 	var views []data.PowerView
 
 	for _, n := range r.nodes {
-		if n.power == nil {
-			continue
-		}
-
-		p := n.power.Data
-
-		views = append(views, data.PowerView{
-			Name:            p.Name,
-			DeviceName:      n.name,
-			DeviceConnected: p.Connectivity == environment.ConnectivityOnline,
-			HasData:         p.HasData,
-			HasPower:        p.HasPower,
-			Power:           p.Power,
-			HasVoltage:      p.HasVoltage,
-			Voltage:         p.Voltage,
-			HasCurrent:      p.HasCurrent,
-			Current:         p.Current,
-			HasEnergy:       p.HasEnergy,
-			Energy:          p.Energy,
-			LastUpdateTime:  p.LastUpdateTime,
-			OfflineSince:    p.OfflineSince,
-			OnlineSince:     p.OnlineSince,
-		})
+		views = append(views, r.powerViewsOf(n)...)
 	}
 
 	sort.Slice(views, func(i, j int) bool { return views[i].DeviceName < views[j].DeviceName })

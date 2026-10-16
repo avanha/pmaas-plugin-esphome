@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -53,32 +54,24 @@ func checkContains(t *testing.T, out string, wants []string, unwanteds []string)
 	}
 }
 
-func TestStatusTemplate_ARunningBrokerWithDevices(t *testing.T) {
+func TestStatusTemplate_ARunningBroker(t *testing.T) {
 	now := time.Now()
 
 	out := render(t, statusTemplate, &data.PluginStatus{
 		BrokerRunning: true, ListenAddress: "[::]:1883", DiscoveryPrefix: "homeassistant",
-		LastMessageTime: now.Add(-2 * time.Minute), ConnectedDevices: 1, ThermometerCount: 1, DoorSensorCount: 2,
-		Devices: []data.DeviceStatus{
-			{
-				Name: "garagedoor1", Label: "Double Garage Door", Connected: true, ConnectedSince: now.Add(-3 * time.Hour),
-				Address: "10.47.7.17", Firmware: "2026.8.0", Model: "esp32", Manufacturer: "Espressif",
-				MAC: "20:50:0d:e4:64:ec", EntityCount: 3, LastMessageTime: now.Add(-30 * time.Second),
-			},
-			{Name: "garagedoor2", Label: "garagedoor2", DisconnectedSince: now.Add(-90 * time.Minute), EntityCount: 1},
-			{Name: "never", Label: "never"},
-		},
+		LastMessageTime: now.Add(-2 * time.Minute), DeviceCount: 3, ConnectedDevices: 1, ThermometerCount: 1, DoorSensorCount: 2,
 	})
 
 	checkContains(t, out, []string{
-		"Listening on", "[::]:1883", "homeassistant",
-		"(1 of 3 connected)",
-		"1 thermometer,", "2 door sensors",
-		"Double Garage Door", "garagedoor1", "Connected 3h 0m ago",
-		"10.47.7.17", "2026.8.0", "esp32 (Espressif)", "20:50:0d:e4:64:ec",
-		"Disconnected 1h 30m ago", "Never connected",
-		`device connected`, `device disconnected`,
-	}, []string{"Not running", "Capturing messages", "No devices are configured"})
+		"Listening on", "[::]:1883", "homeassistant", "1 of 3 connected", "1 thermometer,", "2 door sensors",
+	}, []string{"Not running", "Capturing messages", "No devices are configured", "device-header"})
+}
+
+func TestStatusTemplate_NoLongerListsTheDevicesThemselves(t *testing.T) {
+	out := render(t, statusTemplate, &data.PluginStatus{BrokerRunning: true, DeviceCount: 1, ConnectedDevices: 1})
+
+	// Each device has a card of its own, with its status in it.
+	checkContains(t, out, []string{"1 of 1 connected"}, []string{"Connected 3h", "device-details", "Firmware"})
 }
 
 func TestStatusTemplate_ABrokerThatIsNotRunningSaysWhy(t *testing.T) {
@@ -87,7 +80,7 @@ func TestStatusTemplate_ABrokerThatIsNotRunningSaysWhy(t *testing.T) {
 	})
 
 	checkContains(t, out,
-		[]string{"Not running", "unable to listen on :1883: address already in use", "No devices are configured", "(0 of 0 connected)"},
+		[]string{"Not running", "unable to listen on :1883: address already in use", "0 of 0 connected"},
 		[]string{"Listening on"})
 }
 
@@ -119,14 +112,6 @@ func TestStatusTemplate_Pluralization(t *testing.T) {
 	}
 }
 
-func TestStatusTemplate_OnlyShowsTheDetailsAdeviceHas(t *testing.T) {
-	out := render(t, statusTemplate, &data.PluginStatus{
-		Devices: []data.DeviceStatus{{Name: "d", Label: "d", Connected: true, ConnectedSince: time.Now()}},
-	})
-
-	checkContains(t, out, []string{"Entities"}, []string{"Address", "Firmware", "Model", "MAC", "Last message</span> just"})
-}
-
 func TestThermometerTemplate(t *testing.T) {
 	out := render(t, thermometerTemplate, &data.ThermometerView{
 		Name: "Garage Temperature", DeviceName: "garagedoor1", DeviceConnected: true, HasData: true,
@@ -134,8 +119,9 @@ func TestThermometerTemplate(t *testing.T) {
 	})
 
 	checkContains(t, out,
-		[]string{"Garage Temperature", "20.0 C", "68.0 F", "39.2%", "5m ago", "garagedoor1"},
-		[]string{"offline", "Waiting for data"})
+		[]string{"Garage Temperature", "20.0 C", "68.0 F", "39.2%", "5m ago"},
+		// The device's name is on its card, and isn't repeated under each thing it has.
+		[]string{"offline", "Waiting for data", "garagedoor1"})
 
 	out = render(t, thermometerTemplate, &data.ThermometerView{Name: "T", DeviceConnected: true, HasData: true, Temperature: 21.5})
 	checkContains(t, out, []string{"21.5 C", "70.7 F"}, []string{"droplet"})
@@ -208,10 +194,12 @@ func TestTemplates_EscapeEverythingThatComesFromOutside(t *testing.T) {
 	outputs := map[string]string{
 		"status": render(t, statusTemplate, &data.PluginStatus{
 			BrokerProblem: hostile, ListenAddress: attack, DiscoveryPrefix: hostile,
-			Devices: []data.DeviceStatus{{
-				Name: attack, Label: hostile, Address: attack, Firmware: hostile, Model: hostile,
-				Manufacturer: attack, MAC: hostile,
-			}},
+		}),
+		"device": render(t, deviceTemplate, &deviceWithChildren{
+			DeviceStatus: data.DeviceStatus{
+				Name: attack, Label: hostile, Transport: hostile, Problem: hostile, Address: attack, Firmware: hostile,
+				Model: hostile, Manufacturer: attack, MAC: hostile,
+			},
 		}),
 		"status running": render(t, statusTemplate, &data.PluginStatus{
 			BrokerRunning: true, ListenAddress: attack, DiscoveryPrefix: hostile,
@@ -273,13 +261,37 @@ type listContainer struct {
 	call renderCall
 }
 
+// GetTemplate loads the real templates, as the template engine would, with text/template.
+func (c *listContainer) GetTemplate(info *spi.TemplateInfo) (spi.CompiledTemplate, error) {
+	name := path.Base(info.Paths[0])
+
+	tmpl, err := template.New(name).Funcs(info.FuncMap).ParseFS(contentFS, "content/"+info.Paths[0])
+	if err != nil {
+		return spi.CompiledTemplate{}, err
+	}
+
+	return spi.CompiledTemplate{Instance: namedTemplate{tmpl, name}, Styles: info.Styles, Scripts: info.Scripts}, nil
+}
+
+type namedTemplate struct {
+	t    *template.Template
+	name string
+}
+
+func (n namedTemplate) Execute(w io.Writer, data any) error {
+	return n.t.ExecuteTemplate(w, n.name, data)
+}
+
 func (c *listContainer) RenderList(_ http.ResponseWriter, _ *http.Request, options spi.RenderListOptions, items []interface{}) {
 	c.call = renderCall{options: options, items: items, rendered: true}
 }
 
-func TestHandleHttpListRequest_RendersTheStatusAboveTheEntities(t *testing.T) {
+func TestHandleHttpListRequest_RendersTheStatusAboveTheDeviceCards(t *testing.T) {
 	status := data.PluginStatus{BrokerRunning: true}
-	entities := []any{&data.ThermometerView{Name: "T"}, &data.DoorSensorView{Name: "D"}}
+	entities := []any{
+		&data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "plug1"}, Children: []data.Child{data.SwitchView{Name: "S"}, data.PowerView{Name: "P"}}},
+		&data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "plug2"}},
+	}
 
 	container := &listContainer{}
 	h := &Handler{container: container, entityStore: &fakeStore{result: common.StatusAndEntities{Status: status, Entities: entities}}}
@@ -296,13 +308,139 @@ func TestHandleHttpListRequest_RendersTheStatusAboveTheEntities(t *testing.T) {
 		t.Fatalf("the status should be the header, as a pointer, got %#v", call.options.Header)
 	}
 
-	if _, ok := call.items[0].(*data.ThermometerView); !ok {
-		t.Errorf("unexpected first item %T", call.items[0])
+	first, ok := call.items[0].(*deviceWithChildren)
+	if !ok || first.Name != "plug1" || len(first.Children) != 2 {
+		t.Fatalf("unexpected first item %#v", call.items[0])
 	}
 
-	if _, ok := call.items[1].(*data.DoorSensorView); !ok {
-		t.Errorf("unexpected second item %T", call.items[1])
+	// The children stay in the order the device's list had them: the ordering is done before this.
+	if first.Children[0].Child.Kind() != data.KindSwitch || first.Children[1].Child.Kind() != data.KindPowerMonitor {
+		t.Errorf("unexpected children %+v", first.Children)
 	}
+
+	if second, ok := call.items[1].(*deviceWithChildren); !ok || second.Name != "plug2" || len(second.Children) != 0 {
+		t.Errorf("unexpected second item %#v", call.items[1])
+	}
+}
+
+// Something that isn't a device in the list is reported and left out, not rendered as something it isn't.
+func TestHandleHttpListRequest_LeavesOutWhatIsNotADevice(t *testing.T) {
+	container := &listContainer{}
+	h := &Handler{container: container, entityStore: &fakeStore{result: common.StatusAndEntities{
+		Entities: []any{"not a device", &data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "plug1"}}},
+	}}}
+
+	h.handleHttpListRequest(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+
+	if len(container.call.items) != 1 {
+		t.Fatalf("unexpected items %#v", container.call.items)
+	}
+}
+
+// What there is a renderer for, for every kind of child there is.
+func TestChildKinds_EveryKindHasARendererThatTakesItsOwnViews(t *testing.T) {
+	views := map[string]data.Child{
+		data.KindSwitch:       data.SwitchView{},
+		data.KindPowerMonitor: data.PowerView{},
+		data.KindDoorSensor:   data.DoorSensorView{},
+		data.KindThermometer:  data.ThermometerView{},
+	}
+
+	for kind, view := range views {
+		if view.Kind() != kind {
+			t.Errorf("%T says it's a %q, not a %q", view, view.Kind(), kind)
+		}
+
+		entry, ok := childKinds[kind]
+		if !ok {
+			t.Errorf("no renderer for %q", kind)
+			continue
+		}
+
+		if _, ok := entry.cast(view); !ok {
+			t.Errorf("the %q renderer doesn't take a %T", kind, view)
+		}
+
+		// Nor does it take another kind's.
+		for otherKind, other := range views {
+			if otherKind != kind {
+				if _, ok := entry.cast(other); ok {
+					t.Errorf("the %q renderer takes a %T", kind, other)
+				}
+			}
+		}
+	}
+
+	if len(childKinds) != len(views) {
+		t.Errorf("there are %d renderers for %d kinds", len(childKinds), len(views))
+	}
+}
+
+// The device card with its children, rendered by the real templates the way the page does it.
+func TestDeviceCard_RendersItsChildrenInsideItself(t *testing.T) {
+	container := &listContainer{}
+	h := &Handler{container: container}
+
+	device := h.newDeviceWithChildren(&data.DeviceView{
+		DeviceStatus: data.DeviceStatus{
+			Name: "kauf-plug-1", Label: "Space Heater", Transport: "Native API", Connected: true,
+			ConnectedSince: time.Now().Add(-3 * time.Hour), Address: "10.0.0.7:6053", Firmware: "2026.9.1",
+			Model: "PLF10", Manufacturer: "Kauf", MAC: "aa:bb:cc:dd:ee:ff", LastMessageTime: time.Now(),
+		},
+		Children: []data.Child{
+			data.SwitchView{Name: "Space Heater Relay", DeviceName: "kauf-plug-1", ObjectID: "relay", DeviceConnected: true,
+				CanControl: true, HasData: true, State: "On", StateClass: "on", LastUpdateTime: time.Now()},
+			data.PowerView{Name: "Space Heater Power", DeviceName: "kauf-plug-1", DeviceConnected: true, HasData: true, HasPower: true, Power: 27.5},
+		},
+	})
+
+	out := render(t, deviceTemplate, device)
+
+	checkContains(t, out, []string{
+		`entity-esphome-device connected`, "Space Heater", "kauf-plug-1", "Native API", "Connected 3h 0m ago",
+		"10.0.0.7:6053", "2026.9.1", "PLF10 (Kauf)", "aa:bb:cc:dd:ee:ff",
+		`entity-esphome-switch on`, "Space Heater Relay", `class="switch-toggle on"`, "27.5 W",
+	}, []string{"Nothing it has is tracked", "disconnected"})
+
+	// Inside the card, in order, each in a block of its own.
+	if strings.Count(out, `class="child"`) != 2 || strings.Index(out, "entity-esphome-switch") > strings.Index(out, "entity-esphome-power") {
+		t.Errorf("unexpected children:\n%s", out)
+	}
+
+	// The device's name is in its header and not repeated under each child.
+	if strings.Count(out, "kauf-plug-1</div>") != 0 && strings.Contains(out, "device-note") {
+		t.Errorf("the children still repeat the device's name:\n%s", out)
+	}
+}
+
+func TestDeviceCard_ADeviceWithNothingTrackedStillHasACard(t *testing.T) {
+	out := render(t, deviceTemplate, &deviceWithChildren{
+		DeviceStatus: data.DeviceStatus{Name: "plug2", Label: "Lamp", Transport: "Native API", Problem: "dial tcp 10.0.0.9:6053: i/o timeout"},
+	})
+
+	checkContains(t, out, []string{
+		`entity-esphome-device disconnected`, "Lamp", "Never connected", "dial tcp 10.0.0.9:6053: i/o timeout",
+		"Nothing it has is tracked yet",
+	}, []string{`class="child"`, "Address", "Firmware"})
+
+	out = render(t, deviceTemplate, &deviceWithChildren{DeviceStatus: data.DeviceStatus{Name: "p", Label: "P", Connected: true}})
+	checkContains(t, out, []string{"Nothing it has is tracked."}, []string{"tracked yet", "problem"})
+}
+
+func TestDeviceCard_OnlyShowsTheDetailsTheDeviceHas(t *testing.T) {
+	out := render(t, deviceTemplate, &deviceWithChildren{
+		DeviceStatus: data.DeviceStatus{Name: "d", Label: "d", Connected: true, ConnectedSince: time.Now()},
+	})
+
+	checkContains(t, out, nil, []string{"Address", "Firmware", "Model", "MAC", "Last message"})
+}
+
+func TestDeviceCard_ADisconnectedDeviceSaysSince(t *testing.T) {
+	out := render(t, deviceTemplate, &deviceWithChildren{
+		DeviceStatus: data.DeviceStatus{Name: "d", Label: "d", DisconnectedSince: time.Now().Add(-90 * time.Minute)},
+	})
+
+	checkContains(t, out, []string{"Disconnected 1h 30m ago", "bi-wifi-off"}, []string{"Never connected"})
 }
 
 func TestHandleHttpListRequest_StillRendersAPageWhenTheStatusCannotBeRetrieved(t *testing.T) {
@@ -347,12 +485,11 @@ func TestSwitchTemplate_EachState(t *testing.T) {
 	changed := time.Now().Add(-26 * time.Hour)
 
 	for _, c := range []struct {
-		state, class, icon      string
-		onDisabled, offDisabled bool
+		state, class, icon, nextOn, title string
 	}{
-		{"On", "on", "bi-toggle-on", true, false},
-		{"Off", "off", "bi-toggle-off", false, true},
-		{"Unknown", "unknown", "bi-question-circle-fill", false, false},
+		{"On", "on", "bi-toggle-on", "false", "Turn off"},
+		{"Off", "off", "bi-toggle-off", "true", "Turn on"},
+		{"Unknown", "unknown", "bi-question-circle-fill", "true", "Turn on"},
 	} {
 		out := render(t, switchTemplate, &data.SwitchView{
 			Name: "Heater", DeviceName: "plug1", ObjectID: "relay", DeviceConnected: true, CanControl: true, HasData: true,
@@ -362,25 +499,24 @@ func TestSwitchTemplate_EachState(t *testing.T) {
 		checkContains(t, out, []string{
 			`class="entity-esphome-switch ` + c.class + `"`, `data-device="plug1"`, `data-object="relay"`,
 			c.icon, `class="state ` + c.class + `">` + c.state, c.state + " since 1d 2h ago",
-		}, []string{"offline", "Waiting for data"})
+			// The icon is the control, and asks for the other state.
+			`<button type="button" class="switch-toggle ` + c.class + `"`, `data-on="` + c.nextOn + `"`,
+			`title="` + c.title + `"`, `aria-label="` + c.title + ` Heater"`,
+		}, []string{"offline", "Waiting for data", "Turn on</button>", "Turn off</button>", "disabled"})
 
-		// Asking for the state it's already in would do nothing, so that button is off.
-		on := strings.Contains(out, `data-on="true" disabled`)
-		off := strings.Contains(out, `data-on="false" disabled`)
-
-		if on != c.onDisabled || off != c.offDisabled {
-			t.Errorf("%s: turn-on disabled=%v (want %v), turn-off disabled=%v (want %v):\n%s",
-				c.state, on, c.onDisabled, off, c.offDisabled, out)
+		// The icon is inside the button, not beside it.
+		if strings.Index(out, "<button") > strings.Index(out, c.icon) || strings.Index(out, c.icon) > strings.Index(out, "</button>") {
+			t.Errorf("%s: the icon isn't inside the button:\n%s", c.state, out)
 		}
 	}
 }
 
-func TestSwitchTemplate_ControlsOnlyWhenTheyCanBeUsed(t *testing.T) {
+func TestSwitchTemplate_TheIconIsOnlyAPictureWhenItCannotBeControlled(t *testing.T) {
 	out := render(t, switchTemplate, &data.SwitchView{Name: "S", DeviceConnected: true, CanControl: true, HasData: true, StateClass: "on", State: "On"})
-	checkContains(t, out, []string{"Turn on", "Turn off", "switch-button"}, nil)
+	checkContains(t, out, []string{"switch-toggle"}, []string{"disabled"})
 
 	out = render(t, switchTemplate, &data.SwitchView{Name: "S", DeviceConnected: true, HasData: true, StateClass: "on", State: "On"})
-	checkContains(t, out, nil, []string{"Turn on", "Turn off", "switch-button"})
+	checkContains(t, out, []string{"switch-toggle", " disabled>"}, nil)
 }
 
 func TestSwitchTemplate_WaitingAndOffline(t *testing.T) {
@@ -390,9 +526,10 @@ func TestSwitchTemplate_WaitingAndOffline(t *testing.T) {
 	out = render(t, switchTemplate, &data.SwitchView{
 		Name: "S", HasData: true, State: "On", StateClass: "on", OfflineSince: time.Now().Add(-5 * time.Minute),
 	})
+	// Still shown, as a picture: nothing can be asked of a device that's offline.
 	checkContains(t, out, []string{
-		"entity-esphome-switch on offline", "bi-wifi-off", "Device offline since 5m ago: last known state",
-	}, []string{"switch-button"})
+		"entity-esphome-switch on offline", "bi-wifi-off", "Device offline since 5m ago: last known state", "switch-toggle", " disabled>",
+	}, nil)
 }
 
 func TestPowerTemplate_ShowsOnlyTheReadingsTheDeviceHas(t *testing.T) {
@@ -402,8 +539,8 @@ func TestPowerTemplate_ShowsOnlyTheReadingsTheDeviceHas(t *testing.T) {
 	})
 
 	checkContains(t, out,
-		[]string{"Heater Power", "1500.2 W", "12.346 kWh", "2m ago", "plug1"},
-		[]string{" V<", " A<", "offline", "Waiting for data"})
+		[]string{"Heater Power", "1500.2 W", "12.346 kWh", "2m ago"},
+		[]string{" V<", " A<", "offline", "Waiting for data", "plug1"})
 
 	out = render(t, powerTemplate, &data.PowerView{
 		Name: "P", DeviceConnected: true, HasData: true, HasVoltage: true, Voltage: 121.34, HasCurrent: true, Current: 0.5,
@@ -492,5 +629,26 @@ func TestHandleHttpSwitchRequest_ReportsWhyItCouldNotBeSent(t *testing.T) {
 	_, err := h.handleHttpSwitchRequest(nil, switchRequestFor("POST"), &switchRequest{Device: "plug1", Object: "relay", On: true})
 	if err == nil || !strings.Contains(err.Error(), "the device is offline") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// Inside a device's card the device is already on show, so each child is headed by its own short name, and the full
+// one is there for whoever hovers over it.
+func TestChildTemplates_AreHeadedByTheShortNameAndTheFullNameIsOnlyATooltip(t *testing.T) {
+	for name, out := range map[string]string{
+		"thermometer": render(t, thermometerTemplate, &data.ThermometerView{Name: "Garage 1 Temperature", ShortName: "Temperature", HasData: true, DeviceConnected: true}),
+		"door":        render(t, doorSensorTemplate, &data.DoorSensorView{Name: "Garage 1 Door", ShortName: "Door", HasData: true, DeviceConnected: true, PositionClass: "open", Position: "Open"}),
+		"switch":      render(t, switchTemplate, &data.SwitchView{Name: "Garage 1 Plug", ShortName: "Switch", HasData: true, DeviceConnected: true, StateClass: "on", State: "On"}),
+		"power":       render(t, powerTemplate, &data.PowerView{Name: "Garage 1 Power", ShortName: "Power", HasData: true, DeviceConnected: true}),
+	} {
+		short := map[string]string{"thermometer": "Temperature", "door": "Door", "switch": "Switch", "power": "Power"}[name]
+		full := map[string]string{"thermometer": "Garage 1 Temperature", "door": "Garage 1 Door", "switch": "Garage 1 Plug", "power": "Garage 1 Power"}[name]
+
+		checkContains(t, out, []string{`<div class="name" title="` + full + `">` + short + `</div>`}, nil)
+
+		// The full name is in the tooltip and nowhere else, except where an assistive reader needs it.
+		if strings.Count(out, full) > 2 {
+			t.Errorf("%s: the full name is repeated:\n%s", name, out)
+		}
 	}
 }

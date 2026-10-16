@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"embed"
 	"errors"
 	"fmt"
@@ -26,6 +27,22 @@ var funcMap = template.FuncMap{
 	"CelsiusToFahrenheit": celsiusToFahrenheit,
 }
 
+// deviceFuncMap is for the device card, which renders its children with RenderChild.
+var deviceFuncMap = template.FuncMap{
+	"RelativeTime": relativeTime,
+	"RenderChild":  renderChild,
+}
+
+// The device card carries the styles and scripts of everything that can be inside it, since the page only collects
+// those of what it renders itself.
+var deviceTemplate = spi.TemplateInfo{
+	Name:    "esphome_device",
+	FuncMap: deviceFuncMap,
+	Paths:   []string{"templates/esphome_device.htmlt"},
+	Styles:  []string{"css/esphome_device.css", "css/esphome_entity.css"},
+	Scripts: []string{"js/esphome_switch.js"},
+}
+
 var statusTemplate = spi.TemplateInfo{
 	Name:    "esphome_status",
 	FuncMap: funcMap,
@@ -37,29 +54,24 @@ var thermometerTemplate = spi.TemplateInfo{
 	Name:    "esphome_thermometer",
 	FuncMap: funcMap,
 	Paths:   []string{"templates/esphome_thermometer.htmlt"},
-	Styles:  []string{"css/esphome_entity.css"},
 }
 
 var switchTemplate = spi.TemplateInfo{
 	Name:    "esphome_switch",
 	FuncMap: funcMap,
 	Paths:   []string{"templates/esphome_switch.htmlt"},
-	Styles:  []string{"css/esphome_entity.css"},
-	Scripts: []string{"js/esphome_switch.js"},
 }
 
 var powerTemplate = spi.TemplateInfo{
 	Name:    "esphome_power",
 	FuncMap: funcMap,
 	Paths:   []string{"templates/esphome_power.htmlt"},
-	Styles:  []string{"css/esphome_entity.css"},
 }
 
 var doorSensorTemplate = spi.TemplateInfo{
 	Name:    "esphome_door_sensor",
 	FuncMap: funcMap,
 	Paths:   []string{"templates/esphome_door_sensor.htmlt"},
-	Styles:  []string{"css/esphome_entity.css"},
 }
 
 // Handler owns the plugin's HTTP surface: the page, and the renderers for what's on it. It reaches back into
@@ -90,33 +102,103 @@ func (h *Handler) Init(container spi.IPMAASContainer, entityStore common.EntityS
 			return status, ok
 		}))
 	container.RegisterEntityRenderer(
-		reflect.TypeOf((*data.ThermometerView)(nil)).Elem(),
-		h.rendererFactory(&thermometerTemplate, "esphome_thermometer", func(entity any) (any, bool) {
-			view, ok := entity.(*data.ThermometerView)
-			return view, ok
+		reflect.TypeOf((*deviceWithChildren)(nil)).Elem(),
+		h.rendererFactory(&deviceTemplate, "esphome_device", func(entity any) (any, bool) {
+			device, ok := entity.(*deviceWithChildren)
+			return device, ok
 		}))
 	container.AddJsonRoute(
 		"switch",
 		func() any { return &switchRequest{} },
 		h.handleHttpSwitchRequest)
-	container.RegisterEntityRenderer(
-		reflect.TypeOf((*data.SwitchView)(nil)).Elem(),
-		h.rendererFactory(&switchTemplate, "esphome_switch", func(entity any) (any, bool) {
-			view, ok := entity.(*data.SwitchView)
-			return view, ok
-		}))
-	container.RegisterEntityRenderer(
-		reflect.TypeOf((*data.PowerView)(nil)).Elem(),
-		h.rendererFactory(&powerTemplate, "esphome_power", func(entity any) (any, bool) {
-			view, ok := entity.(*data.PowerView)
-			return view, ok
-		}))
-	container.RegisterEntityRenderer(
-		reflect.TypeOf((*data.DoorSensorView)(nil)).Elem(),
-		h.rendererFactory(&doorSensorTemplate, "esphome_door_sensor", func(entity any) (any, bool) {
-			view, ok := entity.(*data.DoorSensorView)
-			return view, ok
-		}))
+}
+
+// childKind is how one kind of child is rendered: which template, and how to get what the template wants from the
+// child. The children are values, as they come in a device's list, and the templates take them as they are.
+type childKind struct {
+	template *spi.TemplateInfo
+	name     string
+	cast     func(child data.Child) (any, bool)
+}
+
+// childKinds has a renderer for each kind of child there is. The device card renders each child by its Kind.
+var childKinds = map[string]childKind{
+	data.KindSwitch: {&switchTemplate, "esphome_switch", func(c data.Child) (any, bool) {
+		v, ok := c.(data.SwitchView)
+		return v, ok
+	}},
+	data.KindPowerMonitor: {&powerTemplate, "esphome_power", func(c data.Child) (any, bool) {
+		v, ok := c.(data.PowerView)
+		return v, ok
+	}},
+	data.KindDoorSensor: {&doorSensorTemplate, "esphome_door_sensor", func(c data.Child) (any, bool) {
+		v, ok := c.(data.DoorSensorView)
+		return v, ok
+	}},
+	data.KindThermometer: {&thermometerTemplate, "esphome_thermometer", func(c data.Child) (any, bool) {
+		v, ok := c.(data.ThermometerView)
+		return v, ok
+	}},
+}
+
+// deviceWithChildren is a device and what's inside its card, each child with what renders it, the way netmon's host
+// carries its interfaces. The core never sees it: it's what the page's own renderer is given.
+type deviceWithChildren struct {
+	data.DeviceStatus
+	Children []*childWithRenderer
+}
+
+type childWithRenderer struct {
+	Child  data.Child
+	Render func(w io.Writer, child data.Child) error
+}
+
+// renderChild is what the device card calls for each child. A child that can't be rendered says so in the card, and
+// doesn't stop the rest of the page.
+func renderChild(child *childWithRenderer) (string, error) {
+	var out bytes.Buffer
+
+	if err := child.Render(&out, child.Child); err != nil {
+		return "", err
+	}
+
+	return out.String(), nil
+}
+
+// newDeviceWithChildren readies a device for rendering by finding the renderer for each of its children. A child
+// of a kind there's no renderer for is left out, and said so.
+func (h *Handler) newDeviceWithChildren(device *data.DeviceView) *deviceWithChildren {
+	result := &deviceWithChildren{DeviceStatus: device.DeviceStatus, Children: make([]*childWithRenderer, 0, len(device.Children))}
+
+	for _, child := range device.Children {
+		kind, known := childKinds[child.Kind()]
+		if !known {
+			fmt.Printf("esphome.http: no renderer for a %q child of %s\n", child.Kind(), device.Name)
+			continue
+		}
+
+		renderer, err := h.rendererFactory(kind.template, kind.name, func(entity any) (any, bool) { return entity, true })()
+		if err != nil {
+			fmt.Printf("esphome.http: unable to render a %q child of %s: %v\n", child.Kind(), device.Name, err)
+			continue
+		}
+
+		cast := kind.cast
+
+		result.Children = append(result.Children, &childWithRenderer{
+			Child: child,
+			Render: func(w io.Writer, c data.Child) error {
+				value, ok := cast(c)
+				if !ok {
+					return fmt.Errorf("a %q child that isn't one: %T", c.Kind(), c)
+				}
+
+				return renderer.StreamingRenderFunc(w, value)
+			},
+		})
+	}
+
+	return result
 }
 
 func (h *Handler) handleHttpListRequest(w http.ResponseWriter, r *http.Request) {
@@ -127,11 +209,23 @@ func (h *Handler) handleHttpListRequest(w http.ResponseWriter, r *http.Request) 
 		result = common.StatusAndEntities{}
 	}
 
+	entities := make([]any, 0, len(result.Entities))
+
+	for _, entity := range result.Entities {
+		device, ok := entity.(*data.DeviceView)
+		if !ok {
+			fmt.Printf("esphome.http handleHttpListRequest: unexpected %T in the list\n", entity)
+			continue
+		}
+
+		entities = append(entities, h.newDeviceWithChildren(device))
+	}
+
 	h.container.RenderList(
 		w,
 		r,
 		spi.RenderListOptions{Title: "ESPHome Devices", Header: &result.Status},
-		result.Entities)
+		entities)
 }
 
 // switchRequest is what the switch card's button sends: which switch, and whether to turn it on or off.

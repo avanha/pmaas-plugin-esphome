@@ -634,6 +634,8 @@ func TestEntityName(t *testing.T) {
 		{"kauf-plug-7981c8", "Kauf Plug", "Kauf Plug 7981c8", "Kauf Plug 7981c8"},
 		{"kauf-plug-7981c8", "kauf plug", "Kauf Plug 7981c8", "Kauf Plug 7981c8"},
 		{"kauf-plug-7981c8", "Power", "Kauf Plug 7981c8", "Kauf Plug 7981c8 Power"},
+		// Named for what the device calls itself, whatever it's been given to be called on the page.
+		{"garage1", "Kauf Plug", "Kauf Plug 7981c8", "Left Garage"}, // given the display name Left Garage
 		// But only at a word boundary: "Kauf" isn't the start of "Kaufman Plug".
 		{"p", "Kauf", "Kaufman Plug", "Kaufman Plug Kauf"},
 		{"p", "Kauf Plug 7981c8 Extra", "Kauf Plug 7981c8", "Kauf Plug 7981c8 Extra"},

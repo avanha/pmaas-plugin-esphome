@@ -63,7 +63,7 @@ func TestPowerViews(t *testing.T) {
 	}
 
 	want := data.PowerView{
-		Name: "plug1 Power", DeviceName: "plug1", DeviceConnected: true, HasData: true,
+		Name: "plug1 Power", ShortName: "Power", DeviceName: "plug1", DeviceConnected: true, HasData: true,
 		HasPower: true, Power: 1500, HasEnergy: true, Energy: 2.5, LastUpdateTime: f.clock,
 		OnlineSince: views[0].OnlineSince,
 	}
@@ -91,38 +91,6 @@ func TestDeviceStatus_CountsSwitchesAndPowerMonitorAsEntities(t *testing.T) {
 	}
 }
 
-func TestOrderEntities_APlugsSwitchAndPowerSitTogetherAfterTheRest(t *testing.T) {
-	got := orderEntities(
-		[]data.ThermometerView{{DeviceName: "b", Name: "t"}, {DeviceName: "a", Name: "t"}},
-		[]data.DoorSensorView{{DeviceName: "a", Name: "d"}},
-		[]data.SwitchView{{DeviceName: "b", Name: "s2"}, {DeviceName: "b", Name: "s1"}, {DeviceName: "a", Name: "s"}},
-		[]data.PowerView{{DeviceName: "b", Name: "p"}, {DeviceName: "a", Name: "p"}})
-
-	var order []string
-
-	for _, e := range got {
-		switch v := e.(type) {
-		case *data.ThermometerView:
-			order = append(order, v.DeviceName+":thermometer")
-		case *data.DoorSensorView:
-			order = append(order, v.DeviceName+":door")
-		case *data.SwitchView:
-			order = append(order, v.DeviceName+":switch:"+v.Name)
-		case *data.PowerView:
-			order = append(order, v.DeviceName+":power")
-		}
-	}
-
-	want := []string{
-		"a:thermometer", "a:door", "a:switch:s", "a:power",
-		"b:thermometer", "b:switch:s1", "b:switch:s2", "b:power",
-	}
-
-	if !reflect.DeepEqual(order, want) {
-		t.Fatalf("got  %v\nwant %v", order, want)
-	}
-}
-
 func TestGetStatusAndEntities_CountsAndListsEverything(t *testing.T) {
 	config := NewPluginConfig()
 	config.AddDevice(DeviceConfig{Name: "plug1", Password: "x"})
@@ -136,8 +104,10 @@ func TestGetStatusAndEntities_CountsAndListsEverything(t *testing.T) {
 
 	got := p.getStatusAndEntities()
 
-	if got.Status.SwitchCount != 1 || got.Status.PowerMonitorCount != 1 || len(got.Entities) != 2 {
-		t.Fatalf("unexpected status %+v with %d entities", got.Status, len(got.Entities))
+	cards := deviceViews(t, got.Entities)
+
+	if got.Status.SwitchCount != 1 || got.Status.PowerMonitorCount != 1 || len(cards) != 1 || kinds(cards[0]) != "switch,power" {
+		t.Fatalf("unexpected status %+v with %d cards", got.Status, len(cards))
 	}
 }
 

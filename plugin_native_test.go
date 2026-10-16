@@ -161,13 +161,19 @@ func TestPlugin_ANativeDeviceIsRegisteredAndControlledAndStopsCleanly(t *testing
 
 	c.onPluginGoroutine(func() {
 		status := p.getStatusAndEntities()
+		cards := deviceViews(t, status.Entities)
 		views.switches = len(p.registry.switchViews())
 		views.power = p.registry.powerViews()[0].Power
-		views.label = status.Status.Devices[0].Label
-		views.devices = len(status.Status.Devices)
+		views.label = cards[0].Label
+		views.devices = len(cards)
 		views.counts = [2]int{status.Status.SwitchCount, status.Status.PowerMonitorCount}
 
-		if d := status.Status.Devices[0]; d.Transport != "Native API" || !d.Connected || d.Address != "10.0.0.7:6053" || d.Problem != "" {
+		// The switch, then the power, in the card of the device they're on.
+		if got := kinds(cards[0]); got != "switch,power" {
+			t.Errorf("unexpected children %q", got)
+		}
+
+		if d := cards[0]; d.Transport != "Native API" || !d.Connected || d.Address != "10.0.0.7:6053" || d.Problem != "" {
 			t.Errorf("unexpected device status %+v", d)
 		}
 	})
@@ -251,7 +257,7 @@ func TestPlugin_ANativeDeviceThatCannotBeReachedShowsWhy(t *testing.T) {
 	}
 
 	eventually(t, c, "the problem", func() bool {
-		d := p.getStatusAndEntities().Status.Devices[0]
+		d := deviceViews(t, p.getStatusAndEntities().Entities)[0]
 		device0.problem, device0.connected = d.Problem, d.Connected
 
 		return d.Problem != ""
@@ -277,7 +283,7 @@ func TestPlugin_ABadNativeEntryIsSkippedAndTheRestRun(t *testing.T) {
 	eventually(t, c, "the good device", func() bool { return len(c.registrations) == 2 })
 
 	c.onPluginGoroutine(func() {
-		if devices := p.getStatusAndEntities().Status.Devices; len(devices) != 1 || devices[0].Name != "plug1" {
+		if devices := deviceViews(t, p.getStatusAndEntities().Entities); len(devices) != 1 || devices[0].Name != "plug1" {
 			t.Errorf("unexpected devices %+v", devices)
 		}
 	})
@@ -311,8 +317,10 @@ func TestPlugin_NativeAndMQTTDevicesRunTogether(t *testing.T) {
 	c.onPluginGoroutine(func() {
 		s := p.getStatusAndEntities().Status
 
-		if !s.BrokerRunning || s.BrokerNotUsed || len(s.Devices) != 2 || s.Devices[0].Transport != "MQTT" ||
-			s.Devices[1].Transport != "Native API" || s.ConnectedDevices != 2 {
+		cards := deviceViews(t, p.getStatusAndEntities().Entities)
+
+		if !s.BrokerRunning || s.BrokerNotUsed || len(cards) != 2 || cards[0].Transport != "MQTT" ||
+			cards[1].Transport != "Native API" || s.ConnectedDevices != 2 || s.DeviceCount != 2 {
 			t.Errorf("unexpected status %+v", s)
 		}
 	})

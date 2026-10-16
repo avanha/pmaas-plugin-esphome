@@ -7,7 +7,7 @@ class EsphomeSwitches {
         const cards = this.doc.querySelectorAll("div.entity-esphome-switch");
 
         cards.forEach((card) => {
-            card.querySelectorAll("button.switch-button").forEach((button) => {
+            card.querySelectorAll("button.switch-toggle").forEach((button) => {
                 button.addEventListener("click", () => this.send(card, button));
             });
         });
@@ -17,7 +17,7 @@ class EsphomeSwitches {
 
     send = async (card, button) => {
         const errorElement = card.querySelector(".switch-error");
-        const buttons = card.querySelectorAll("button.switch-button");
+        const buttons = card.querySelectorAll("button.switch-toggle");
         errorElement.textContent = "";
         buttons.forEach((b) => b.disabled = true);
 

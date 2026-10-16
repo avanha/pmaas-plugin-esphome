@@ -456,18 +456,37 @@ func (r *registry) entityName(deviceName string, e hadiscovery.Entity) string {
 	name := strings.TrimSpace(e.Name)
 
 	switch {
-	case name == "" || strings.EqualFold(name, label):
-		return label
-	case strings.HasPrefix(strings.ToLower(label), strings.ToLower(name)+" "):
-		// A device's main entity is named after the device, but ESPHome makes the name unique with the end
-		// of the MAC address: a Kauf plug's relay is "Kauf Plug" on a device called "Kauf Plug 7981c8". It's
-		// the device, so it's called that, rather than "Kauf Plug 7981c8 Kauf Plug".
+	case isTheDeviceItself(name, label, e.Device.Name):
 		return label
 	case strings.HasPrefix(strings.ToLower(name), strings.ToLower(label)+" "):
 		return name
 	default:
 		return label + " " + name
 	}
+}
+
+// isTheDeviceItself is whether an entity's name says it is the device's main entity, which is called by the
+// device's name and has none of its own: it has no name, or is named for the device, either as it's labelled or as
+// the device calls itself. A device usually calls itself more than its main entity is called, because ESPHome puts
+// the end of the MAC address on the device's name to tell two apart and not on the entity's: a Kauf plug's relay is
+// "Kauf Plug" on a device called "Kauf Plug 7981c8". The label is checked as well as the device's own name, since
+// what the entity is named for is the second, whatever the first has been configured to.
+func isTheDeviceItself(name string, label string, announcedName string) bool {
+	if name == "" {
+		return true
+	}
+
+	lowerName := strings.ToLower(name)
+
+	for _, device := range []string{label, announcedName} {
+		lowerDevice := strings.ToLower(strings.TrimSpace(device))
+
+		if lowerDevice != "" && (lowerName == lowerDevice || strings.HasPrefix(lowerDevice, lowerName+" ")) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // deviceLabel is what to call a device: the display name it was configured with, else the name it announces

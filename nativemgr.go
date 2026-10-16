@@ -262,7 +262,9 @@ func describeNativeError(err error) string {
 	case errors.Is(err, nativeapi.ErrDeviceNotEncrypted):
 		return "a Key is configured but the device isn't using encryption: remove the Key, or set one on the device"
 	case errors.As(err, &wrongDevice):
-		return fmt.Sprintf("the device at this address calls itself %q, not %q: is the address right?", wrongDevice.Got, wrongDevice.Expected)
+		return fmt.Sprintf("the device at this address calls itself %q, not %q: Name must be the device's ESPHome name "+
+			"(use DisplayName to call it something else on the page), and the address must be its address",
+			wrongDevice.Got, wrongDevice.Expected)
 	default:
 		return err.Error()
 	}

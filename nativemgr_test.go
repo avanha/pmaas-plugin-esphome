@@ -389,6 +389,7 @@ func TestDescribeNativeError(t *testing.T) {
 		{nativeapi.ErrEncryptionRequired, "set the device's Key"},
 		{nativeapi.ErrDeviceNotEncrypted, "remove the Key"},
 		{&nativeapi.WrongDeviceError{Expected: "plug1", Got: "plug2"}, `calls itself "plug2", not "plug1"`},
+		{&nativeapi.WrongDeviceError{Expected: "plug1", Got: "plug2"}, "use DisplayName"},
 		{errors.New("connection refused"), "connection refused"},
 	} {
 		if got := describeNativeError(c.err); !strings.Contains(got, c.want) {

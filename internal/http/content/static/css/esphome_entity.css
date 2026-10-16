@@ -111,13 +111,6 @@
     color: #d9534f;
 }
 
-.entity-esphome-thermometer .device-note,
-.entity-esphome-door-sensor .device-note,
-.entity-esphome-switch .device-note,
-.entity-esphome-power .device-note {
-    font-size: 0.8em;
-    opacity: 0.55;
-}
 
 .entity-esphome-switch .state-row {
     display: flex;
@@ -148,11 +141,30 @@
     color: #888888;
 }
 
-.entity-esphome-switch .controls {
-    display: flex;
-    flex-flow: row wrap;
-    align-items: center;
-    gap: 6px;
+/* The icon is the control. It's a button with nothing of a button about it but the pointer and a hover. */
+.entity-esphome-switch .switch-toggle {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.entity-esphome-switch .switch-toggle:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.entity-esphome-switch .switch-toggle:focus-visible {
+    outline: 2px solid #5b9bd5;
+    outline-offset: 2px;
+}
+
+/* A switch that can't be controlled right now (the device is offline) is only a picture. */
+.entity-esphome-switch .switch-toggle:disabled {
+    cursor: default;
 }
 
 .entity-esphome-switch .switch-error {
