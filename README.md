@@ -310,6 +310,11 @@ voltage, current or energy, and `binary_sensor` entities with a `device_class` o
 `opening`. Anything else is logged and ignored. Turning a switch on or off sends the device a command, and the
 switch's state changes when the device reports it.
 
+Not every device sends each entity's object id, which is what the plugin keys things by: a Kauf plug on ESPHome
+2025.8.2 sent none for its sensors. When there isn't one it's worked out from the entity's name the way ESPHome does
+(`Total Daily Energy` is `total_daily_energy`), so the entity is the same either way, and two entities that would end
+up with the same one have their key put on the end, so readings can never land on the wrong sensor.
+
 **Security.** Stock Kauf and Athom firmware runs the native API unencrypted, with no password, so anyone on the
 network can read it and command the device. Keep such devices on a network you trust (an IoT VLAN), or put an
 `api: encryption: key:` in their firmware and give PMAAS the key. Encryption is Noise

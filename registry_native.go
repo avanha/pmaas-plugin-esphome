@@ -2,6 +2,7 @@ package esphome
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -58,7 +59,7 @@ func (r *registry) HandleNativeMessage(deviceName string, message proto.Message)
 		}
 
 		r.describeNative(n, m.Key, hadiscovery.Entity{
-			Component: "sensor", ObjectID: m.ObjectId, Name: m.Name,
+			Component: "sensor", ObjectID: r.nativeObjectID(n, "sensor", m.ObjectId, m.Name, m.Key), Name: m.Name,
 			DeviceClass: m.DeviceClass, UnitOfMeasurement: m.UnitOfMeasurement,
 		})
 	case *pb.ListEntitiesBinarySensorResponse:
@@ -68,7 +69,8 @@ func (r *registry) HandleNativeMessage(deviceName string, message proto.Message)
 		}
 
 		r.describeNative(n, m.Key, hadiscovery.Entity{
-			Component: "binary_sensor", ObjectID: m.ObjectId, Name: m.Name, DeviceClass: m.DeviceClass,
+			Component: "binary_sensor", ObjectID: r.nativeObjectID(n, "binary_sensor", m.ObjectId, m.Name, m.Key),
+			Name: m.Name, DeviceClass: m.DeviceClass,
 		})
 	case *pb.ListEntitiesSwitchResponse:
 		if hiddenNativeEntity(m.EntityCategory, m.DisabledByDefault) {
@@ -77,7 +79,8 @@ func (r *registry) HandleNativeMessage(deviceName string, message proto.Message)
 		}
 
 		r.describeNative(n, m.Key, hadiscovery.Entity{
-			Component: "switch", ObjectID: m.ObjectId, Name: m.Name, DeviceClass: m.DeviceClass,
+			Component: "switch", ObjectID: r.nativeObjectID(n, "switch", m.ObjectId, m.Name, m.Key),
+			Name: m.Name, DeviceClass: m.DeviceClass,
 		})
 	case *pb.ListEntitiesDoneResponse:
 		r.finishNativeListing(n)
@@ -96,6 +99,45 @@ func (r *registry) HandleNativeMessage(deviceName string, message proto.Message)
 	default:
 		r.countIgnoredNative(n, message)
 	}
+}
+
+var nonIdentifierPattern = regexp.MustCompile(`[^a-z0-9]+`)
+
+// nativeObjectID is what the registry calls an entity the device describes: what the device calls it, the object
+// id, which is what everything else is keyed by.
+//
+// Not every device sends one. A Kauf plug on ESPHome 2025.8.2 sent none for any of its sensors, and every sensor
+// then had the same "name", so they all shared one entry in the registry and the last to arrive won: the plug's
+// voltage was shown as its power. So when there isn't one it's worked out from the entity's name the way ESPHome
+// does, in lower case with underscores between words, which is what the device would have sent, so an entity is the
+// same whether or not it does. And when two entities still end up with the same one (whatever the reason) the
+// second has its key, which the device makes unique, put on the end, so they can never share an entry.
+func (r *registry) nativeObjectID(n *node, component string, objectID string, name string, key uint32) string {
+	id := objectID
+
+	// Called by the same name as last time, which is what an entity is: a device that listed it twice with a
+	// different order mustn't swap what's registered under each.
+	if id == "" {
+		if existing, known := n.native.keys[key]; known && existing.component == component {
+			return existing.objectID
+		}
+	}
+
+	if id == "" {
+		id = strings.Trim(nonIdentifierPattern.ReplaceAllString(strings.ToLower(name), "_"), "_")
+	}
+
+	if id == "" {
+		return fmt.Sprintf("%s_%d", component, key)
+	}
+
+	if n.native.listing[nativeRef{component, id}] {
+		if existing, known := n.native.keys[key]; !known || existing != (nativeRef{component, id}) {
+			return fmt.Sprintf("%s_%d", id, key)
+		}
+	}
+
+	return id
 }
 
 // hiddenNativeEntity is whether a device marks an entity as one that isn't for ordinary use: a setting of the
