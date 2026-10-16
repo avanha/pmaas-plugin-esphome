@@ -357,7 +357,7 @@ func TestNativeManager_AFailureThatWaitingWontFixIsWaitedOutSlowlyAndExplained(t
 
 	for _, err := range []error{
 		nativeapi.ErrInvalidKey, nativeapi.ErrEncryptionRequired, nativeapi.ErrDeviceNotEncrypted,
-		nativeapi.ErrIncompatibleVersion, &nativeapi.WrongDeviceError{Expected: "a", Got: "b"},
+		nativeapi.ErrIncompatibleVersion, nativeapi.ErrPasswordRequired, &nativeapi.WrongDeviceError{Expected: "a", Got: "b"},
 		fmt.Errorf("wrapped: %w", nativeapi.ErrInvalidKey),
 	} {
 		if got := m.delayAfterFailure(err, &backoff); got != m.maxBackoff {
@@ -388,6 +388,7 @@ func TestDescribeNativeError(t *testing.T) {
 		{nativeapi.ErrInvalidKey, "doesn't accept the configured encryption key"},
 		{nativeapi.ErrEncryptionRequired, "set the device's Key"},
 		{nativeapi.ErrDeviceNotEncrypted, "remove the Key"},
+		{nativeapi.ErrPasswordRequired, "api: encryption: key"},
 		{&nativeapi.WrongDeviceError{Expected: "plug1", Got: "plug2"}, `calls itself "plug2", not "plug1"`},
 		{&nativeapi.WrongDeviceError{Expected: "plug1", Got: "plug2"}, "use DisplayName"},
 		{errors.New("connection refused"), "connection refused"},

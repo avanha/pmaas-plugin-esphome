@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -453,40 +454,102 @@ func (r *registry) removeChannel(n *node, key hadiscovery.Key) {
 func (r *registry) entityName(deviceName string, e hadiscovery.Entity) string {
 	label := r.deviceLabel(deviceName, e.Device.Name)
 
-	name := strings.TrimSpace(e.Name)
-
-	switch {
-	case isTheDeviceItself(name, label, e.Device.Name):
+	itself, own := splitEntityName(e.Name, label, e.Device.Name)
+	if itself {
 		return label
-	case strings.HasPrefix(strings.ToLower(name), strings.ToLower(label)+" "):
-		return name
-	default:
-		return label + " " + name
 	}
+
+	return label + " " + own
 }
 
-// isTheDeviceItself is whether an entity's name says it is the device's main entity, which is called by the
-// device's name and has none of its own: it has no name, or is named for the device, either as it's labelled or as
-// the device calls itself. A device usually calls itself more than its main entity is called, because ESPHome puts
-// the end of the MAC address on the device's name to tell two apart and not on the entity's: a Kauf plug's relay is
-// "Kauf Plug" on a device called "Kauf Plug 7981c8". The label is checked as well as the device's own name, since
-// what the entity is named for is the second, whatever the first has been configured to.
-func isTheDeviceItself(name string, label string, announcedName string) bool {
-	if name == "" {
-		return true
+var (
+	nameWordPattern = regexp.MustCompile(`[\p{L}\p{N}]+`)
+
+	// ESPHome ends a device's name with six hex digits of its MAC address to tell devices of one kind apart.
+	macSuffixPattern = regexp.MustCompile(`^[0-9a-fA-F]{6}$`)
+)
+
+// nameWords is where each word of a name starts and ends. Punctuation and spacing between them aren't words, so
+// "kauf-plug-7aad7c" and "Kauf Plug 7aad7c" are the same three.
+func nameWords(name string) [][]int {
+	return nameWordPattern.FindAllStringIndex(name, -1)
+}
+
+func wordsEqual(name string, nameSpans [][]int, other string, otherSpans [][]int) bool {
+	if len(nameSpans) != len(otherSpans) {
+		return false
 	}
 
-	lowerName := strings.ToLower(name)
-
-	for _, device := range []string{label, announcedName} {
-		lowerDevice := strings.ToLower(strings.TrimSpace(device))
-
-		if lowerDevice != "" && (lowerName == lowerDevice || strings.HasPrefix(lowerDevice, lowerName+" ")) {
-			return true
+	for i := range nameSpans {
+		if !strings.EqualFold(name[nameSpans[i][0]:nameSpans[i][1]], other[otherSpans[i][0]:otherSpans[i][1]]) {
+			return false
 		}
 	}
 
-	return false
+	return true
+}
+
+// deviceNameForms are the ways an entity's name can refer to its device: by the label it's been given, and by what
+// it calls itself, each also without the end of its MAC address.
+func deviceNameForms(label string, announcedName string) []struct {
+	text  string
+	spans [][]int
+} {
+	var forms []struct {
+		text  string
+		spans [][]int
+	}
+
+	for _, text := range []string{label, announcedName} {
+		spans := nameWords(text)
+		if len(spans) == 0 {
+			continue
+		}
+
+		forms = append(forms, struct {
+			text  string
+			spans [][]int
+		}{text, spans})
+
+		if last := spans[len(spans)-1]; len(spans) > 1 && macSuffixPattern.MatchString(text[last[0]:last[1]]) {
+			forms = append(forms, struct {
+				text  string
+				spans [][]int
+			}{text, spans[:len(spans)-1]})
+		}
+	}
+
+	return forms
+}
+
+// splitEntityName says whether an entity is its device's main entity, and if it isn't, what its own name is.
+//
+// The main entity is called by the device's name and has none of its own: its name is empty, or is the device's, or
+// the start of it. A device usually calls itself more than its main entity is called, since the end of the MAC
+// address is on the device's name and not on the entity's: a Kauf plug's relay is "Kauf Plug" on a device called
+// "Kauf Plug 7981c8". Both what the device is labelled and what it calls itself are checked, since an entity is
+// named for the second, whatever the first has been set to.
+//
+// An entity's own name is what the device called it, without the device's name in front of it if it had that too:
+// older Kauf firmware has "Kauf Plug Power" on that plug, and the device's name is already on show.
+func splitEntityName(entityName string, label string, announcedName string) (itself bool, own string) {
+	entityName = strings.TrimSpace(entityName)
+	words := nameWords(entityName)
+
+	if len(words) == 0 {
+		return true, ""
+	}
+
+	for _, form := range deviceNameForms(label, announcedName) {
+		switch {
+		case len(words) <= len(form.spans) && wordsEqual(entityName, words, form.text, form.spans[:len(words)]):
+			return true, ""
+		case len(words) > len(form.spans) && wordsEqual(entityName, words[:len(form.spans)], form.text, form.spans):
+			return false, strings.TrimSpace(entityName[words[len(form.spans)][0]:])
+		}
+	}
+
+	return false, entityName
 }
 
 // deviceLabel is what to call a device: the display name it was configured with, else the name it announces

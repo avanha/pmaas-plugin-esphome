@@ -98,15 +98,13 @@ func (r *registry) deviceStatus(name string) data.DeviceStatus {
 // plug without the end of its MAC address) is called by what it is, which is fallback.
 func (r *registry) shortName(deviceName string, e hadiscovery.Entity, fallback string) string {
 	label := r.deviceLabel(deviceName, e.Device.Name)
-	name := strings.TrimSpace(e.Name)
-	switch {
-	case isTheDeviceItself(name, label, e.Device.Name):
+
+	itself, own := splitEntityName(e.Name, label, e.Device.Name)
+	if itself {
 		return fallback
-	case len(name) > len(label) && strings.EqualFold(name[:len(label)], label) && name[len(label)] == ' ':
-		return strings.TrimSpace(name[len(label)+1:])
-	default:
-		return name
 	}
+
+	return own
 }
 
 // The views of what a device has, in no particular order. The ones that follow put them all in order, for the

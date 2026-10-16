@@ -247,6 +247,7 @@ func isPersistentNativeError(err error) bool {
 		errors.Is(err, nativeapi.ErrEncryptionRequired) ||
 		errors.Is(err, nativeapi.ErrDeviceNotEncrypted) ||
 		errors.Is(err, nativeapi.ErrIncompatibleVersion) ||
+		errors.Is(err, nativeapi.ErrPasswordRequired) ||
 		errors.As(err, &wrongDevice)
 }
 
@@ -259,6 +260,9 @@ func describeNativeError(err error) string {
 		return "the device doesn't accept the configured encryption key"
 	case errors.Is(err, nativeapi.ErrEncryptionRequired):
 		return "the device requires encryption: set the device's Key to its api: encryption: key"
+	case errors.Is(err, nativeapi.ErrPasswordRequired):
+		return "the device has an API password, which PMAAS can't use: replace it with an api: encryption: key on the device, " +
+			"and give PMAAS the key"
 	case errors.Is(err, nativeapi.ErrDeviceNotEncrypted):
 		return "a Key is configured but the device isn't using encryption: remove the Key, or set one on the device"
 	case errors.As(err, &wrongDevice):

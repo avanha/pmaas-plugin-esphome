@@ -3,6 +3,7 @@ package nativeapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -761,6 +762,87 @@ func TestDial_AnythingElseBeforeTheHelloIsSkippedNotFatal(t *testing.T) {
 
 		if c.Hello().Name != "plug1" || logged.Load() != 1 || len(got.all()) != 0 {
 			t.Fatalf("hello %+v, %d logged, %d delivered", c.Hello(), logged.Load(), len(got.all()))
+		}
+	})
+}
+
+// Found on a fleet of Kauf plugs: firmware from before ESPHome 2026.1 ignores every request after the hello until
+// it's had an authentication request, with no password, and then lists nothing. Home Assistant's client sends one
+// straight away, and so must this.
+func TestDial_OldFirmwareListsNothingUntilItIsAuthenticated(t *testing.T) {
+	forBothFramings(t, func(t *testing.T, key string) {
+		device := newFakeDevice(t, key)
+		device.requireAuth = true
+
+		got := newCollector()
+		c := dial(t, device.config(), got.handle)
+		session := device.nextSession(t)
+
+		// Its first request after the hello is the authentication, before anything is asked of it.
+		session.waitFor(t, "the authentication request", isType[*pb.AuthenticationRequest])
+
+		if err := c.Send(&pb.ListEntitiesRequest{}); err != nil {
+			t.Fatal(err)
+		}
+
+		got.waitFor(t, "the entities", isType[*pb.ListEntitiesDoneResponse])
+
+		var types []string
+		for _, m := range session.messages() {
+			types = append(types, fmt.Sprintf("%T", m))
+		}
+
+		if len(types) < 3 || types[0] != "*pb.HelloRequest" || types[1] != "*pb.AuthenticationRequest" || types[2] != "*pb.ListEntitiesRequest" {
+			t.Fatalf("unexpected order of what the device was sent: %v", types)
+		}
+
+		// Its answer is the connection's business, not the caller's.
+		for _, m := range got.all() {
+			if _, isAuth := m.(*pb.AuthenticationResponse); isAuth {
+				t.Fatalf("the authentication response reached the handler")
+			}
+		}
+	})
+}
+
+// Newer firmware has no authentication and takes no notice of the request: it must make no difference.
+func TestDial_NewFirmwareThatIgnoresTheAuthenticationRequestIsUnaffected(t *testing.T) {
+	forBothFramings(t, func(t *testing.T, key string) {
+		device := newFakeDevice(t, key)
+
+		got := newCollector()
+		c := dial(t, device.config(), got.handle)
+
+		if err := c.Send(&pb.ListEntitiesRequest{}); err != nil {
+			t.Fatal(err)
+		}
+
+		got.waitFor(t, "the entities", isType[*pb.ListEntitiesDoneResponse])
+
+		select {
+		case <-c.Done():
+			t.Fatalf("the connection ended: %v", c.Err())
+		default:
+		}
+	})
+}
+
+func TestConn_ADeviceWithAPasswordIsSaidToNeedOne(t *testing.T) {
+	forBothFramings(t, func(t *testing.T, key string) {
+		device := newFakeDevice(t, key)
+		device.requireAuth = true
+		device.invalidPassword = true
+
+		c := dial(t, device.config(), newCollector().handle)
+
+		select {
+		case <-c.Done():
+		case <-time.After(5 * time.Second):
+			t.Fatal("the connection didn't end")
+		}
+
+		if !errors.Is(c.Err(), ErrPasswordRequired) {
+			t.Fatalf("got %v", c.Err())
 		}
 	})
 }

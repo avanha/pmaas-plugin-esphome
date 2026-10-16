@@ -636,6 +636,11 @@ func TestEntityName(t *testing.T) {
 		{"kauf-plug-7981c8", "Power", "Kauf Plug 7981c8", "Kauf Plug 7981c8 Power"},
 		// Named for what the device calls itself, whatever it's been given to be called on the page.
 		{"garage1", "Kauf Plug", "Kauf Plug 7981c8", "Left Garage"}, // given the display name Left Garage
+		// Older Kauf firmware: no friendly name, and the plug's name on every entity.
+		{"kauf-plug-7aad7c", "Kauf Plug", "kauf-plug-7aad7c", "kauf-plug-7aad7c"},
+		{"kauf-plug-7aad7c", "Kauf Plug Power", "kauf-plug-7aad7c", "kauf-plug-7aad7c Power"},
+		{"kauf-plug-7aad7c", "Kauf Plug Total Daily Energy", "kauf-plug-7aad7c", "kauf-plug-7aad7c Total Daily Energy"},
+		{"garage1", "Kauf Plug Current", "kauf-plug-7aad7c", "Left Garage Current"},
 		// But only at a word boundary: "Kauf" isn't the start of "Kaufman Plug".
 		{"p", "Kauf", "Kaufman Plug", "Kaufman Plug Kauf"},
 		{"p", "Kauf Plug 7981c8 Extra", "Kauf Plug 7981c8", "Kauf Plug 7981c8 Extra"},

@@ -227,6 +227,14 @@ func (c *Conn) setup(ctx context.Context) error {
 		return &WrongDeviceError{Expected: c.cfg.Name, Got: sanitize(c.hello.Name)}
 	}
 
+	// Firmware from before ESPHome 2026.1 wants the authentication request, with no password, straight after the
+	// hello and before anything else: until it gets one it ignores the requests that follow, and lists nothing.
+	// Newer firmware has dropped it and takes no notice. Home Assistant's client sends it for the same reason. Its
+	// answer isn't waited for, since newer devices never give one: it's dealt with when it arrives, in housekeeping.
+	if err := c.Send(&pb.AuthenticationRequest{}); err != nil { //nolint:staticcheck // legacy authentication
+		return c.setupError(ctx, err)
+	}
+
 	return c.conn.SetDeadline(time.Time{})
 }
 
@@ -366,6 +374,11 @@ func (c *Conn) housekeeping(message proto.Message) bool {
 		c.finish(&DeviceDisconnectedError{Reason: m.Reason})
 	case *pb.DisconnectResponse:
 		c.finish(ErrClosed)
+	case *pb.AuthenticationResponse: //nolint:staticcheck // legacy authentication
+		// The device has a password, which can't be given.
+		if m.InvalidPassword {
+			c.finish(ErrPasswordRequired)
+		}
 	case *pb.GetTimeRequest:
 		response := &pb.GetTimeResponse{EpochSeconds: uint32(time.Now().Unix())}
 		if c.cfg.Timezone != "" {

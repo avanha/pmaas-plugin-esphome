@@ -31,6 +31,10 @@ var (
 	// ErrClosed is the reason a connection ended when it was closed by the caller.
 	ErrClosed = errors.New("the connection was closed")
 
+	// ErrPasswordRequired means the device has an API password set. ESPHome removed passwords in 2026.1 in favour of
+	// encryption keys, and this client only does the latter: put an api: encryption: key on the device instead.
+	ErrPasswordRequired = errors.New("the device requires an API password, which isn't supported: use an encryption key")
+
 	// ErrIncompatibleVersion is a device whose API is a major version this client doesn't speak.
 	ErrIncompatibleVersion = errors.New("the device's API version isn't supported")
 )

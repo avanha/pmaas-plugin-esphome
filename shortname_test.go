@@ -43,6 +43,23 @@ func TestShortName(t *testing.T) {
 		{"garage1", "Kauf Plug 7981c8", "Kauf Plug 7981c8", "Switch", "Switch"},
 		{"garage1", "Kauf Plug 7981c8", "Power", "Switch", "Power"},
 
+		// Older Kauf firmware announces no friendly name, so the device is "kauf-plug-7aad7c", and puts the plug's
+		// model-style name on every entity: "Kauf Plug Power", and "Kauf Plug" for the relay.
+		{"kauf-plug-7aad7c", "kauf-plug-7aad7c", "Kauf Plug", "Switch", "Switch"},
+		{"kauf-plug-7aad7c", "kauf-plug-7aad7c", "Kauf Plug Power", "Switch", "Power"},
+		{"kauf-plug-7aad7c", "kauf-plug-7aad7c", "Kauf Plug Total Daily Energy", "Switch", "Total Daily Energy"},
+		{"kauf-plug-7aad7c", "kauf-plug-7aad7c", "Kauf Plug 7aad7c Power", "Switch", "Power"},
+		{"kauf-plug-7aad7c", "kauf-plug-7aad7c", "KAUF-PLUG Voltage", "Switch", "Voltage"},
+		// And with a display name on top, the same: what's checked is what the device calls itself as well.
+		{"garage1", "kauf-plug-7aad7c", "Kauf Plug Current", "Switch", "Current"},
+		{"garage1", "kauf-plug-7aad7c", "Kauf Plug", "Switch", "Switch"},
+
+		// The end of a MAC address is only taken off when it is one: six hex digits.
+		{"p", "Plug ABCDEFG", "Plug Power", "Switch", "Plug Power"}, // seven letters, and not hex: no MAC to take off
+		{"p", "Plug 12345G", "Plug Power", "Switch", "Plug Power"},  // six, but not all hex
+		{"p", "Plug 7aad7c", "Plug Power", "Switch", "Power"},       // six hex digits: it's a MAC, so the device is "Plug"
+		{"p", "Plug", "Plug Power", "Switch", "Power"},
+
 		// Only at a word boundary.
 		{"p", "Kaufman Plug", "Kauf", "Switch", "Kauf"},
 		{"p", "Kauf Plug", "Kauf Plugs", "Switch", "Kauf Plugs"},
@@ -145,3 +162,44 @@ func TestShortName_EveryKindOfChildHasOne(t *testing.T) {
 }
 
 var _ = device.SwitchStateOn
+
+// The listing a real Kauf plug on ESPHome 2023.6.3 (10.47.6.71) sent, which has no friendly name and puts the plug's
+// name on every entity.
+func TestShortName_AnOldKaufPlugsWholeListing(t *testing.T) {
+	f := newFixture(t)
+	f.registry.displayNames = map[string]string{}
+	f.registry.HandleConnected("kauf-plug-7aad7c", "10.47.6.71")
+	f.native("kauf-plug-7aad7c",
+		&pb.DeviceInfoResponse{Name: "kauf-plug-7aad7c", MacAddress: "70:03:9F:7A:AD:7C", EsphomeVersion: "2023.6.3", Model: "esp01_1m"},
+		&pb.ListEntitiesBinarySensorResponse{ObjectId: "kauf_plug_button", Key: 1, Name: "Kauf Plug Button"},
+		&pb.ListEntitiesBinarySensorResponse{ObjectId: "kauf_plug_device_in_use", Key: 2, Name: "Kauf Plug Device In Use"},
+		&pb.ListEntitiesSensorResponse{ObjectId: "kauf_plug_voltage", Key: 3, Name: "Kauf Plug Voltage", DeviceClass: "voltage", UnitOfMeasurement: "V"},
+		&pb.ListEntitiesSensorResponse{ObjectId: "kauf_plug_power", Key: 4, Name: "Kauf Plug Power", DeviceClass: "power", UnitOfMeasurement: "W"},
+		&pb.ListEntitiesSensorResponse{ObjectId: "kauf_plug_uptime", Key: 5, Name: "Kauf Plug Uptime", DeviceClass: "duration", UnitOfMeasurement: "s", DisabledByDefault: true},
+		&pb.ListEntitiesSwitchResponse{ObjectId: "kauf_plug", Key: 6, Name: "Kauf Plug"},
+		&pb.ListEntitiesSwitchResponse{ObjectId: "kauf_plug_blue_led", Key: 7, Name: "Kauf Plug Blue LED", DisabledByDefault: true},
+		&pb.ListEntitiesSwitchResponse{
+			ObjectId: "kauf_plug_no_hass", Key: 8, Name: "Kauf Plug No HASS", DisabledByDefault: true,
+			EntityCategory: pb.EntityCategory_ENTITY_CATEGORY_CONFIG,
+		},
+		&pb.ListEntitiesDoneResponse{})
+
+	view := f.registry.deviceView("kauf-plug-7aad7c")
+
+	var got []string
+
+	for _, child := range view.Children {
+		switch c := child.(type) {
+		case data.SwitchView:
+			got = append(got, c.Kind()+": "+c.Name+" | "+c.ShortName)
+		case data.PowerView:
+			got = append(got, c.Kind()+": "+c.Name+" | "+c.ShortName)
+		}
+	}
+
+	// The relay is the device itself; the rest are the plug's readings. The LEDs and settings are hidden.
+	want := []string{"switch: kauf-plug-7aad7c | Switch", "power: kauf-plug-7aad7c Power | Power"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] || len(view.Children) != 2 {
+		t.Fatalf("got %v with %d children, want %v", got, len(view.Children), want)
+	}
+}

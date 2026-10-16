@@ -42,6 +42,8 @@ type fakeDevice struct {
 	silentAfterHello  bool                                         // answer the hello and then nothing at all
 	neverAnswerHello  bool                                         // read the hello and say nothing
 	askTimeFirst      bool                                         // ask for the time, as a real device does, before the hello response
+	requireAuth       bool                                         // old firmware: ignores requests until authenticated
+	invalidPassword   bool                                         // with requireAuth, says the (empty) password is wrong
 	sendOtherFirst    bool                                         // send a message that isn't the hello response first
 	refuseHandshake   string                                       // answer the encrypted handshake with this, as text
 	onMessage         func(d *deviceSession, m proto.Message) bool // return true if handled
@@ -63,6 +65,8 @@ type deviceSession struct {
 	mu       sync.Mutex
 	received []proto.Message
 	changed  chan struct{}
+
+	authenticated bool // only touched by the session's own goroutine
 }
 
 func newFakeDevice(t *testing.T, key string) *fakeDevice {
@@ -180,7 +184,21 @@ func (d *fakeDevice) serve(conn net.Conn) {
 
 // respond is what a device does by default.
 func (d *fakeDevice) respond(s *deviceSession, message proto.Message) {
+	// Old firmware answers who it is, and then takes no notice of anything until it's been authenticated.
+	if d.requireAuth && !s.authenticated {
+		switch message.(type) {
+		case *pb.HelloRequest, *pb.PingRequest, *pb.DeviceInfoRequest, *pb.DisconnectRequest, *pb.AuthenticationRequest:
+		default:
+			return
+		}
+	}
+
 	switch m := message.(type) {
+	case *pb.AuthenticationRequest:
+		if d.requireAuth {
+			s.authenticated = !d.invalidPassword
+			s.send(&pb.AuthenticationResponse{InvalidPassword: d.invalidPassword})
+		}
 	case *pb.HelloRequest:
 		if d.neverAnswerHello {
 			return
