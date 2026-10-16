@@ -149,6 +149,19 @@ func (b *Broker) shutdown() error {
 				continue
 			}
 
+			if client.Closed() {
+				// Disconnected. If the library is about to remove it, wait for that: it's the removal, a write
+				// lock on the set of clients, that mustn't be in progress when the library's Close looks through
+				// them. But if its session is being kept it never will be, until it expires, and waiting for that
+				// is waiting for ever. ESPHome connects with a persistent session (its mqtt: clean_session option
+				// defaults to false), so every one of its devices is kept.
+				if removedWhenDisconnected(client) {
+					remaining++
+				}
+
+				continue
+			}
+
 			remaining++
 
 			_ = b.server.DisconnectClient(client, packets.ErrServerShuttingDown)
@@ -162,6 +175,20 @@ func (b *Broker) shutdown() error {
 	}
 
 	return b.server.Close()
+}
+
+// removedWhenDisconnected is whether the library takes a client out of its list when it disconnects, which is the
+// condition it applies itself: a clean session, or for MQTT 5 a session that expires at once. A client with a
+// persistent session stays in the list, closed, until the session expires.
+//
+// It reads only the fields the library sets once, when the client connects. Copying the whole of Properties would
+// read the will, which the library's own goroutine clears when the connection ends.
+func removedWhenDisconnected(client *mqtt.Client) bool {
+	if client.Properties.ProtocolVersion == 5 {
+		return client.Properties.Props.SessionExpiryInterval == 0
+	}
+
+	return client.Properties.Clean
 }
 
 // esphomeNamespacePrefix is the start of the topics ESPHome itself uses, as opposed to the ones under a

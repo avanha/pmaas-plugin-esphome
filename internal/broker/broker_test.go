@@ -799,3 +799,133 @@ func TestClose_StopsAcceptingAndDisconnectsEveryone(t *testing.T) {
 	// Closing twice is harmless.
 	_ = b.Close()
 }
+
+// ESPHome connects with a persistent session (its mqtt: clean_session option defaults to false), and the MQTT library
+// keeps such a client in its list after it disconnects, until the session expires, long after. Close waits for
+// clients to go, so it mustn't wait for one that has been disconnected and is only being remembered, or it never
+// returns: that hung PMAAS's shutdown on the Pi.
+func TestClose_DoesNotWaitForADeviceWhoseSessionIsKeptAfterItDisconnects(t *testing.T) {
+	for name, cleanSession := range map[string]bool{"persistent session, as ESPHome connects": false, "clean session": true} {
+		t.Run(name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			b, err := New(Config{
+				Listener:        listener,
+				Devices:         map[string]string{"garage1": "secret1"},
+				DiscoveryPrefix: "homeassistant",
+			}, Callbacks{
+				OnMessage:            func(string, string, []byte, bool) {},
+				OnDeviceConnected:    func(string, string) {},
+				OnDeviceDisconnected: func(string) {},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			opts := paho.NewClientOptions().AddBroker("tcp://" + listener.Addr().String()).SetClientID("garagedoor1-aabbcc").
+				SetUsername("garage1").SetPassword("secret1").SetAutoReconnect(false).SetCleanSession(cleanSession)
+
+			client := paho.NewClient(opts)
+			if token := client.Connect(); !token.WaitTimeout(5*time.Second) || token.Error() != nil {
+				t.Fatalf("connect: %v", token.Error())
+			}
+
+			closed := make(chan struct{})
+
+			go func() {
+				_ = b.Close()
+				close(closed)
+			}()
+
+			select {
+			case <-closed:
+			case <-time.After(10 * time.Second):
+				t.Fatal("Close never returned")
+			}
+
+			// And the device that dropped off earlier, before the shutdown, is the same: its session is kept too.
+			if conn, err := net.DialTimeout("tcp", listener.Addr().String(), 300*time.Millisecond); err == nil {
+				_ = conn.Close()
+				t.Error("still accepting connections after Close")
+			}
+		})
+	}
+}
+
+// The same, for a device that disconnected before the shutdown began.
+func TestClose_DoesNotWaitForADeviceThatDisconnectedEarlierWithAPersistentSession(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := New(Config{
+		Listener:        listener,
+		Devices:         map[string]string{"garage1": "secret1"},
+		DiscoveryPrefix: "homeassistant",
+	}, Callbacks{
+		OnMessage:            func(string, string, []byte, bool) {},
+		OnDeviceConnected:    func(string, string) {},
+		OnDeviceDisconnected: func(string) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts := paho.NewClientOptions().AddBroker("tcp://" + listener.Addr().String()).SetClientID("garagedoor1-aabbcc").
+		SetUsername("garage1").SetPassword("secret1").SetAutoReconnect(false).SetCleanSession(false)
+
+	client := paho.NewClient(opts)
+	if token := client.Connect(); !token.WaitTimeout(5*time.Second) || token.Error() != nil {
+		t.Fatalf("connect: %v", token.Error())
+	}
+
+	client.Disconnect(0)
+	time.Sleep(300 * time.Millisecond) // for the broker to notice, and keep its session
+
+	closed := make(chan struct{})
+
+	go func() {
+		_ = b.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close never returned")
+	}
+}
+
+// Whether the library removes a client from its list when it disconnects, which is the rule it applies itself, and
+// what Close uses to tell a client it should wait for from one that will be there for ever.
+func TestRemovedWhenDisconnected(t *testing.T) {
+	client := func(version byte, clean bool, sessionExpiry uint32) *mqtt.Client {
+		c := &mqtt.Client{}
+		c.Properties.ProtocolVersion = version
+		c.Properties.Clean = clean
+		c.Properties.Props.SessionExpiryInterval = sessionExpiry
+
+		return c
+	}
+
+	for name, c := range map[string]struct {
+		client *mqtt.Client
+		want   bool
+	}{
+		"MQTT 3.1.1, clean session":                  {client(4, true, 0), true},
+		"MQTT 3.1.1, persistent session (ESPHome's)": {client(4, false, 0), false},
+		"MQTT 3.1, persistent session":               {client(3, false, 0), false},
+		"MQTT 5, session expires at once":            {client(5, false, 0), true},
+		"MQTT 5, session kept for an hour":           {client(5, false, 3600), false},
+		// Clean start means something different in MQTT 5, where the expiry interval is what decides.
+		"MQTT 5, clean start but a long expiry": {client(5, true, 3600), false},
+	} {
+		if got := removedWhenDisconnected(c.client); got != c.want {
+			t.Errorf("%s: got %v, want %v", name, got, c.want)
+		}
+	}
+}
