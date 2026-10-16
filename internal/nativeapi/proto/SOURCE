@@ -1,0 +1,3 @@
+api.proto and api_options.proto are copied unmodified from
+https://github.com/esphome/aioesphomeapi (MIT, see LICENSE.aioesphomeapi), path aioesphomeapi/, at tag v46.13.0
+(2026-10-15).

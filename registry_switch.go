@@ -15,6 +15,16 @@ import (
 type switchChannel struct {
 	disc hadiscovery.Entity
 	sw   *entities.Switch
+
+	// native is set for a switch on a device reached over the native API, where a command is a message to the
+	// device naming the switch by key, rather than a publish to a topic.
+	native    bool
+	nativeKey uint32
+}
+
+// commandable is whether there's anywhere to send a command for the switch.
+func (ch *switchChannel) commandable() bool {
+	return ch.native || ch.disc.CommandTopic != ""
 }
 
 func (r *registry) upsertSwitch(n *node, e hadiscovery.Entity) {
@@ -88,12 +98,16 @@ func (r *registry) commandSwitch(n *node, ch *switchChannel, state device.Switch
 	name := r.entityName(n.name, ch.disc)
 
 	switch {
-	case r.stopped || r.publish == nil:
+	case r.stopped || (!ch.native && r.publish == nil):
 		return fmt.Errorf("unable to set %q to %s: the MQTT broker isn't running", name, state)
 	case !n.connected:
 		return fmt.Errorf("unable to set %q to %s: the device is offline", name, state)
-	case ch.disc.CommandTopic == "":
+	case !ch.commandable():
 		return fmt.Errorf("unable to set %q to %s: the device didn't announce a command topic for it", name, state)
+	}
+
+	if ch.native {
+		return r.commandNativeSwitch(n, ch, name, state)
 	}
 
 	payload := ch.disc.CommandPayloadOff
@@ -116,15 +130,19 @@ func (r *registry) handleSwitchState(n *node, ch *switchChannel, payload []byte)
 		return
 	}
 
-	var state device.SwitchState
-
 	switch strings.TrimSpace(string(payload)) {
 	case ch.disc.StatePayloadOn:
-		state = device.SwitchStateOn
+		r.applySwitchState(n, ch, device.SwitchStateOn)
 	case ch.disc.StatePayloadOff:
-		state = device.SwitchStateOff
+		r.applySwitchState(n, ch, device.SwitchStateOff)
 	default:
 		r.logf("%s: unrecognized switch state %q on %s", n.name, payload, ch.disc.StateTopic)
+	}
+}
+
+// applySwitchState takes in the state a switch reported, however it arrived.
+func (r *registry) applySwitchState(n *node, ch *switchChannel, state device.SwitchState) {
+	if ch.sw == nil {
 		return
 	}
 

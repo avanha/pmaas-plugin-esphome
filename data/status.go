@@ -13,6 +13,10 @@ type PluginStatus struct {
 	BrokerProblem string
 	ListenAddress string
 
+	// BrokerNotUsed is that the broker isn't running because no MQTT device is configured for it to serve, which
+	// isn't a problem: every device is reached over the native API.
+	BrokerNotUsed bool
+
 	// DiscoveryPrefix is the topic prefix devices announce their entities under.
 	DiscoveryPrefix string
 
@@ -41,6 +45,14 @@ type DeviceStatus struct {
 	// display name it was configured with, else the name it announces, else Name.
 	Name  string
 	Label string
+
+	// Transport is how PMAAS reaches the device: "MQTT" or "Native API".
+	Transport string
+
+	// Problem is what's stopping a native API device from connecting, if that's known: the last attempt's
+	// error, in terms of what to do about it. Empty for a device that's connected, and for an MQTT device, which
+	// connects to PMAAS rather than the other way round, so there's nothing PMAAS could have got wrong.
+	Problem string
 
 	// Connected is whether the device has a session with the broker now. ConnectedSince is when its
 	// current session began, and DisconnectedSince is when its last one ended. Either is zero if that

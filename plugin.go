@@ -2,6 +2,7 @@ package esphome
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +12,12 @@ import (
 	"github.com/avanha/pmaas-plugin-esphome/internal/broker"
 	httphandler "github.com/avanha/pmaas-plugin-esphome/internal/http"
 	spi "github.com/avanha/pmaas-spi"
+	"google.golang.org/protobuf/proto"
+)
+
+var (
+	errNativeNotRunning   = errors.New("the native API isn't running")
+	errNativeNotConnected = errors.New("the device isn't connected")
 )
 
 type Plugin interface {
@@ -22,15 +29,21 @@ type plugin struct {
 	container spi.IPMAASContainer
 	registry  *registry
 	broker    *broker.Broker
-	// outbox carries commands to the broker, so that the plugin goroutine never waits on it. It's started
-	// with the broker and stopped just before it's closed.
+	native    *nativeManager
+
+	// nativeDial replaces how connections to devices are made, for tests.
+	nativeDial nativeDialFunc
+	// outbox carries commands to the broker and to devices, so that the plugin goroutine never waits on either.
+	// It's started with whichever of them there is, and stopped just before they're closed.
 	outbox      *mailbox.Outbox
 	httpHandler *httphandler.Handler
 
 	// listenAddress is where the broker is listening, or was configured to; brokerProblem is why it isn't
-	// running, if it isn't. Both are for the status page.
+	// running, if it should be; brokerNotUsed is that there's no MQTT device for it to serve. All are for the
+	// status page.
 	listenAddress string
 	brokerProblem string
+	brokerNotUsed bool
 }
 
 // Force implementation of spi.IPMAASPlugin
@@ -48,6 +61,7 @@ func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.container = container
 	p.registry = newRegistry(container, p.config.DiscoveryPrefix, p.config.displayNames())
 	p.registry.publish = p.publishCommand
+	p.registry.nativeSend = p.sendNative
 	p.httpHandler.Init(container, &entityStoreAdapter{parent: p})
 }
 
@@ -56,10 +70,28 @@ func (p *plugin) Start() {
 
 	p.listenAddress = p.config.ListenAddress
 
-	if len(p.config.Devices) == 0 {
+	nativeDevices, problems := p.config.validNativeDevices()
+	for _, problem := range problems {
+		fmt.Printf("%T ERROR: %s\n", *p, problem)
+	}
+
+	if len(p.config.Devices) == 0 && len(nativeDevices) == 0 {
 		p.brokerProblem = "no devices are configured"
 		fmt.Printf("%T WARNING: no devices configured, not starting the MQTT broker\n", *p)
 
+		return
+	}
+
+	p.outbox = mailbox.NewOutbox()
+
+	p.startMQTT()
+	p.startNative(nativeDevices)
+}
+
+// startMQTT starts the broker, if there are MQTT devices for it to serve.
+func (p *plugin) startMQTT() {
+	if len(p.config.Devices) == 0 {
+		p.brokerNotUsed = true
 		return
 	}
 
@@ -72,10 +104,65 @@ func (p *plugin) Start() {
 	}
 
 	p.broker = mqttBroker
-	p.outbox = mailbox.NewOutbox()
 	p.listenAddress = address.String()
 
 	fmt.Printf("%T MQTT broker listening on %s for %d device(s)\n", *p, address, len(p.config.Devices))
+}
+
+// startNative connects to the devices reached over the native API.
+func (p *plugin) startNative(devices []NativeDeviceConfig) {
+	if len(devices) == 0 {
+		return
+	}
+
+	p.native = newNativeManager(devices, p.nativeCallbacks(), p.registry.logf)
+
+	if p.nativeDial != nil {
+		p.native.dial = p.nativeDial
+	}
+
+	p.native.Start()
+
+	fmt.Printf("%T connecting to %d device(s) over the native API\n", *p, len(devices))
+}
+
+// nativeCallbacks hands everything the native API connections report over to the plugin goroutine, the same way
+// and for the same reasons as the broker's.
+func (p *plugin) nativeCallbacks() nativeCallbacks {
+	return nativeCallbacks{
+		onConnected: func(deviceName string, address string) {
+			p.enqueue(func() { p.registry.HandleConnected(deviceName, address) })
+		},
+		onMessage: func(deviceName string, message proto.Message) {
+			if p.config.CaptureMessages {
+				fmt.Printf("esphome capture: device=%s native %T %s\n", deviceName, message, truncate([]byte(fmt.Sprint(message)), 2048))
+			}
+
+			p.enqueue(func() { p.registry.HandleNativeMessage(deviceName, message) })
+		},
+		onDisconnected: func(deviceName string) {
+			p.enqueue(func() { p.registry.HandleDisconnected(deviceName) })
+		},
+	}
+}
+
+// sendNative queues a message for a device reached over the native API. It runs on the plugin goroutine and
+// returns at once; sending can wait on a device that has stopped reading, so it's done on the outbox's.
+func (p *plugin) sendNative(deviceName string, message proto.Message) error {
+	if p.native == nil || p.outbox == nil {
+		return errNativeNotRunning
+	}
+
+	conn := p.native.conn(deviceName)
+	if conn == nil {
+		return errNativeNotConnected
+	}
+
+	return p.outbox.Post(func() {
+		if err := conn.Send(message); err != nil {
+			fmt.Printf("esphome: unable to send a command to %s: %v\n", deviceName, err)
+		}
+	})
 }
 
 // startBroker binds the configured address and starts the broker on it. If it fails, nothing is left
@@ -200,34 +287,42 @@ func (p *plugin) Stop() chan func() {
 	// state owned by this goroutine and doesn't wait on anything, so it's safe to do right here.
 	p.registry.Shutdown()
 
-	// Take the broker and its outbox out of the plugin's state, so that closing them is the job of exactly one
-	// place. With the broker gone, nothing more is queued: publishCommand fails instead.
+	// Take what's running out of the plugin's state, so that closing it is the job of exactly one place. With
+	// it gone, nothing more is queued: publishCommand and sendNative fail instead.
 	broker := p.broker
 	p.broker = nil
+	nativeDevices := p.native
+	p.native = nil
 	commands := p.outbox
 	p.outbox = nil
 
-	// The broker never started (nothing was configured, or startup failed), so there's nothing to
-	// wait for.
-	if broker == nil {
+	// Nothing ever started (nothing was configured, or startup failed), so there's nothing to wait for.
+	if broker == nil && nativeDevices == nil && commands == nil {
 		return p.container.ClosedCallbackChannel()
 	}
 
-	// Close the broker on its own goroutine, and tell the core when it's finished by closing the
-	// channel we hand back. Until then this goroutine stays free to run whatever the broker's
-	// connections are still handing over, which the registry now ignores, so they can finish and
-	// Close can return.
+	// Close it all on its own goroutine, and tell the core when it's finished by closing the channel we hand
+	// back. Until then this goroutine stays free to run whatever the connections are still handing over, which
+	// the registry now ignores, so they can finish and closing can return.
 	done := make(chan func())
 
 	go func() {
 		defer close(done)
 
-		// Hand the commands already queued to the broker first, while it's still there to take them. That's all
-		// that's promised: the broker may close a device's connection before the message reaches it.
-		commands.Stop()
+		// Hand the commands already queued on first, while there's still somewhere to send them. That's all
+		// that's promised: the connection may be closed before a message reaches the device.
+		if commands != nil {
+			commands.Stop()
+		}
 
-		if err := broker.Close(); err != nil {
-			fmt.Printf("%T error closing the MQTT broker: %v\n", *p, err)
+		if nativeDevices != nil {
+			nativeDevices.Stop()
+		}
+
+		if broker != nil {
+			if err := broker.Close(); err != nil {
+				fmt.Printf("%T error closing the MQTT broker: %v\n", *p, err)
+			}
 		}
 	}()
 

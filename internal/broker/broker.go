@@ -14,6 +14,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/listeners"
@@ -54,7 +55,11 @@ type Callbacks struct {
 
 // Broker is an embedded MQTT broker.
 type Broker struct {
-	server *mqtt.Server
+	server   *mqtt.Server
+	listener net.Listener
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // New starts a broker serving cfg.Listener.
@@ -104,7 +109,7 @@ func New(cfg Config, callbacks Callbacks) (*Broker, error) {
 		return nil, err
 	}
 
-	return &Broker{server: server}, nil
+	return &Broker{server: server, listener: cfg.Listener}, nil
 }
 
 // Publish publishes a message from the broker itself, bypassing the ACL. Safe to call from any
@@ -113,8 +118,49 @@ func (b *Broker) Publish(topic string, payload []byte, retain bool) error {
 	return b.server.Publish(topic, payload, retain, 0)
 }
 
-// Close stops the broker, disconnecting every device.
+// Close stops the broker, disconnecting every device. It can be called more than once, which the library's own
+// Close can't: a second call panics.
 func (b *Broker) Close() error {
+	b.closeOnce.Do(func() { b.closeErr = b.shutdown() })
+
+	return b.closeErr
+}
+
+// shutdown works around a deadlock in the library's Close, which looks for the clients to disconnect by taking a
+// read lock on the set of them and then, still holding it, taking another to count them. If a client is being
+// removed in between, its write lock is queued ahead of the second read lock, which waits for the first to be
+// released, which waits for the second: the shutdown hangs. A device dropping off (or reconnecting) just as PMAAS
+// stops is all it takes. So there's nothing left to be removed by the time the library looks: stop accepting new
+// connections, disconnect every client here and wait for each to be gone, and then close.
+//
+// A connection accepted in the instant before the listener closed could still be settling in, so this narrows the
+// window rather than closing it, to one that no device is likely to hit. The library is no longer maintained,
+// so there's no fix to wait for.
+func (b *Broker) shutdown() error {
+	_ = b.listener.Close()
+
+	for {
+		remaining := 0
+
+		// GetAll takes its read lock once, unlike the call the library's Close makes. The broker's own inline
+		// client is in the set too and isn't a connection, so it isn't waited for.
+		for _, client := range b.server.Clients.GetAll() {
+			if client.Net.Inline {
+				continue
+			}
+
+			remaining++
+
+			_ = b.server.DisconnectClient(client, packets.ErrServerShuttingDown)
+		}
+
+		if remaining == 0 {
+			break
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	return b.server.Close()
 }
 

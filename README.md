@@ -4,11 +4,14 @@ A PMAAS plugin for [ESPHome](https://esphome.io) devices. It embeds an MQTT brok
 single executable: your ESP32s are configured in ESPHome YAML to connect to PMAAS, announce what they
 have, and publish their state. There is no custom firmware.
 
-**Status: phase 2.** Thermometers, door position sensors, switches (relays and smart plugs, which can be turned
-on and off from PMAAS) and power monitoring work, and there is an **ESPHome** status page. The ESPHome native API
-(which stock Kauf and Athom firmware speak instead of MQTT) and TLS are not done yet (see [Roadmap](#roadmap)).
+**Status: phase 3.** Thermometers, door position sensors, switches (relays and smart plugs, which can be turned
+on and off from PMAAS) and power monitoring work over either of two transports: the embedded MQTT broker, or the
+ESPHome **native API**, which stock firmware (Kauf plugs, Athom relays) speaks with no MQTT and no reflashing. There
+is an **ESPHome** status page. Finding native devices by mDNS, adopting them from the page, and TLS are not done
+yet (see [Roadmap](#roadmap)).
 
-Switches and power monitoring have been tested against a simulated device only, not yet real hardware.
+The MQTT transport has been verified on real hardware (below). The native API, switches and power monitoring have
+only been tested against simulated devices so far.
 
 Verified on a real ESP32 running ESPHome 2026.8.0, with an SHT3x temperature and humidity sensor and a
 reed switch: the device connects and its entities are discovered; temperature and humidity reach the
@@ -227,11 +230,62 @@ func addEsphome(coreConfig *config.Config) {
    and door sensors, connectivity, tests.
 2. **Phase 2 (done):** the status page, door sensor renderer, switches (`ISwitch`, commands to the device's
    `command_topic`) and power monitoring.
-3. **Next:** the ESPHome native API as a second transport next to the MQTT broker, so stock firmware that has no
-   MQTT (Kauf and Athom plugs and relays) works without reflashing: mDNS discovery, adopting a device, Noise
-   encryption, and the entity mapping above shared by both transports.
-4. **Later:** BLE advertisements, TLS (the ACME plugin's certificate), a Tasmota dialect for devices that can't
+3. **Phase 3 (done, apart from real hardware):** the ESPHome native API as a second transport next to the MQTT
+   broker, so stock firmware that has no MQTT (Kauf and Athom plugs and relays) works without reflashing, with
+   Noise encryption and the entity mapping above shared by both transports.
+4. **Next:** finding native devices by mDNS (`_esphomelib._tcp`), listing them on the status page, and adopting one
+   from the page, with what's adopted kept in the core's config store.
+5. **Later:** BLE advertisements, TLS (the ACME plugin's certificate), a Tasmota dialect for devices that can't
    run ESPHome, signal strength as RSSI.
+
+## Devices on the native API
+
+A stock Kauf plug or Athom relay has the native API on port 6053 and no MQTT. PMAAS connects to it, so there's
+nothing on the device to set up: tell PMAAS where it is.
+
+```go
+conf := esphome.NewPluginConfig()
+conf.AddNativeDevice(esphome.NativeDeviceConfig{
+	Name:        "kauf-plug-1",  // the device's ESPHome name; refused if the device at Address says something else
+	Address:     "10.0.0.7",     // or "plug1.local"; the port defaults to 6053
+	DisplayName: "Space Heater", // optional
+	// Key: "...",               // the device's api: encryption: key, if it has one
+})
+```
+
+A device on both lists is an error. With only native devices configured the broker isn't started, and the page says
+so. Each device is its own connection: one that can't be reached, or has the wrong key, is shown on the page with
+what's wrong, and retried with a growing delay (a minute at most) without affecting the others. A device that
+reboots is reconnected and asked again for everything it has, so entities it no longer has are dropped.
+
+PMAAS asks each device who it is, what entities it has, and to report their states, then maps the entities exactly
+as it does for MQTT: `switch` entities, `sensor` entities with a `device_class` of temperature, humidity, power,
+voltage, current or energy, and `binary_sensor` entities with a `device_class` of `garage_door`, `door` or
+`opening`. Anything else is logged and ignored. Turning a switch on or off sends the device a command, and the
+switch's state changes when the device reports it.
+
+**Security.** Stock Kauf and Athom firmware runs the native API unencrypted, with no password, so anyone on the
+network can read it and command the device. Keep such devices on a network you trust (an IoT VLAN), or put an
+`api: encryption: key:` in their firmware and give PMAAS the key. Encryption is Noise
+(`Noise_NNpsk0_25519_ChaChaPoly_SHA256`) with that 32 byte key. If the wrong key, or none, is configured the page
+says which.
+
+### How the client works
+
+`internal/nativeapi` is the client. It connects, does the encryption handshake if there's a key and the API hello,
+and delivers every message to a handler, answering pings and time requests itself, with a keepalive that gives up on
+a device that has gone quiet. A message it doesn't recognise is skipped rather than ending the connection, since a
+device on newer firmware than this was generated from is normal.
+
+The protobuf bindings (`internal/nativeapi/pb`) are generated from ESPHome's `api.proto` as vendored by Home
+Assistant's client library, which is MIT licensed, pinned to the tag in `internal/nativeapi/proto/SOURCE`. To
+update them, replace the two `.proto` files with a newer tag's and run `internal/nativeapi/generate.sh`, which
+needs only Go. There was no Go client worth depending on: the maintained candidate ends the connection on a
+message type it doesn't know and doesn't check the device's reason for refusing a key.
+
+It's tested against a fake device written from the protocol, in both framings. The encrypted side has not yet been
+tried against real firmware or Home Assistant's own client (that library couldn't be installed where this was
+written), so a first connection to a device with an `api: encryption:` key is the real test of it.
 
 ## Not supported, on purpose
 

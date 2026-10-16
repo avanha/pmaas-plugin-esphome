@@ -103,3 +103,17 @@
 .entity-esphome-status .device-details .label {
     opacity: 0.7;
 }
+
+.entity-esphome-status .transport {
+    font-size: 0.8em;
+    padding: 0 6px;
+    border: 1px solid #a19f9c;
+    border-radius: 8px;
+    opacity: 0.7;
+}
+
+.entity-esphome-status .device .problem {
+    color: #d9534f;
+    font-size: 0.9em;
+    margin: 2px 0;
+}

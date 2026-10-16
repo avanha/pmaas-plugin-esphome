@@ -15,6 +15,7 @@ import (
 	"github.com/avanha/pmaas-spi/device"
 	"github.com/avanha/pmaas-spi/environment"
 	"github.com/avanha/pmaas-spi/events"
+	"google.golang.org/protobuf/proto"
 )
 
 var wirelessThermometerType = reflect.TypeFor[environment.IWirelessThermometer]()
@@ -34,6 +35,9 @@ type registry struct {
 	// publish sends a command to a device, by publishing to one of its topics. It returns once the message is
 	// queued, not once it's delivered. The plugin sets it once there's a broker to publish with.
 	publish func(topic string, payload []byte) error
+
+	// nativeSend sends a message to a device over the native API, and like publish returns once it's queued.
+	nativeSend func(deviceName string, message proto.Message) error
 
 	logf func(format string, args ...any)
 	now  func() time.Time
@@ -67,6 +71,9 @@ type node struct {
 	// power is the device's power monitor: one entity for all its power, voltage, current and energy sensors,
 	// registered when the first of them is announced and deregistered when the last is gone.
 	power *entities.PowerMonitor
+
+	// What's only used by a device that's reached over the native API: see registry_native.go.
+	native nativeState
 }
 
 // sensorChannel is a discovered numeric sensor and its latest reading.
@@ -256,21 +263,35 @@ func (r *registry) handleDiscovery(device string, topic string, payload []byte) 
 		return
 	}
 
+	r.upsertEntity(n, *entity, true)
+}
+
+// upsertEntity registers, or updates, the entity an announcement describes, whichever way it was announced, and
+// reports whether it's one PMAAS tracks. One that isn't is logged, with what to do about it, if logUnsupported:
+// a device announcing over MQTT has few entities and each is worth a line, but a device on the native API lists
+// everything it has, and says so in one line instead.
+func (r *registry) upsertEntity(n *node, entity hadiscovery.Entity, logUnsupported bool) bool {
 	switch {
 	case entity.Component == "sensor" && entity.DeviceClass == "temperature":
-		r.upsertTemperature(n, *entity)
+		r.upsertTemperature(n, entity)
 	case entity.Component == "sensor" && entity.DeviceClass == "humidity":
-		r.upsertHumidity(n, *entity)
+		r.upsertHumidity(n, entity)
 	case entity.Component == "sensor" && powerKindFor(entity.DeviceClass) != powerKindNone:
-		r.upsertPowerSensor(n, *entity)
+		r.upsertPowerSensor(n, entity)
 	case entity.Component == "binary_sensor" && isDoorClass(entity.DeviceClass):
-		r.upsertDoor(n, *entity)
+		r.upsertDoor(n, entity)
 	case entity.Component == "switch":
-		r.upsertSwitch(n, *entity)
+		r.upsertSwitch(n, entity)
 	default:
-		r.logf("%s: ignoring unsupported %s %q (device_class %q): %s",
-			device, entity.Component, entity.ObjectID, entity.DeviceClass, unsupportedHint(*entity))
+		if logUnsupported {
+			r.logf("%s: ignoring unsupported %s %q (device_class %q): %s",
+				n.name, entity.Component, entity.ObjectID, entity.DeviceClass, unsupportedHint(entity))
+		}
+
+		return false
 	}
+
+	return true
 }
 
 // unsupportedHint says what to do about an entity that isn't tracked. The one that comes up in practice is a
@@ -437,6 +458,11 @@ func (r *registry) entityName(deviceName string, e hadiscovery.Entity) string {
 	switch {
 	case name == "" || strings.EqualFold(name, label):
 		return label
+	case strings.HasPrefix(strings.ToLower(label), strings.ToLower(name)+" "):
+		// A device's main entity is named after the device, but ESPHome makes the name unique with the end
+		// of the MAC address: a Kauf plug's relay is "Kauf Plug" on a device called "Kauf Plug 7981c8". It's
+		// the device, so it's called that, rather than "Kauf Plug 7981c8 Kauf Plug".
+		return label
 	case strings.HasPrefix(strings.ToLower(name), strings.ToLower(label)+" "):
 		return name
 	default:
@@ -577,6 +603,11 @@ func (r *registry) handleSensorState(n *node, ch *sensorChannel, payload []byte)
 		return
 	}
 
+	r.applySensorValue(n, ch, value)
+}
+
+// applySensorValue takes in a reading, in the sensor's own unit, however it arrived.
+func (r *registry) applySensorValue(n *node, ch *sensorChannel, value float32) {
 	ch.value = ch.toBase(value)
 	ch.hasValue = true
 	ch.lastUpdate = r.now()
@@ -668,17 +699,26 @@ func (r *registry) handleDoorState(n *node, ch *doorChannel, payload []byte) {
 		return
 	}
 
-	var position device.DoorPosition
-
 	// Home Assistant's convention for door-like binary sensors: on means open.
 	switch strings.TrimSpace(string(payload)) {
 	case ch.disc.StatePayloadOn:
-		position = device.DoorPositionOpen
+		r.applyDoorOpen(n, ch, true)
 	case ch.disc.StatePayloadOff:
-		position = device.DoorPositionClosed
+		r.applyDoorOpen(n, ch, false)
 	default:
 		r.logf("%s: unrecognized door state %q on %s", n.name, payload, ch.disc.StateTopic)
+	}
+}
+
+// applyDoorOpen takes in whether the door is open, however it arrived.
+func (r *registry) applyDoorOpen(n *node, ch *doorChannel, open bool) {
+	if ch.door == nil {
 		return
+	}
+
+	position := device.DoorPositionClosed
+	if open {
+		position = device.DoorPositionOpen
 	}
 
 	d := ch.door

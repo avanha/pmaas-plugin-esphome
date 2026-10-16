@@ -717,3 +717,85 @@ func TestRemoteHost(t *testing.T) {
 		}
 	}
 }
+
+// The MQTT library's Close deadlocks if a client is being removed at the moment it looks for the ones to
+// disconnect (it takes a read lock twice, and a write lock queued between them blocks the second), so a device
+// dropping off just as PMAAS shuts down used to hang the shutdown. Close now stops and removes the clients itself
+// first. This does the shutdown and the disconnection together, many times over, since the window is narrow.
+func TestClose_DoesNotHangWhenDevicesAreDroppingOffAtTheSameMoment(t *testing.T) {
+	const rounds = 150
+
+	for round := 0; round < rounds; round++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		b, err := New(Config{
+			Listener:        listener,
+			Devices:         map[string]string{"garage1": "secret1", "garage2": "secret2"},
+			DiscoveryPrefix: "homeassistant",
+		}, Callbacks{
+			OnMessage:            func(string, string, []byte, bool) {},
+			OnDeviceConnected:    func(string, string) {},
+			OnDeviceDisconnected: func(string) {},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		addr := listener.Addr().String()
+		first := mustConnect(t, addr, "c1", "garage1", "secret1")
+		second := mustConnect(t, addr, "c2", "garage2", "secret2")
+
+		closed := make(chan struct{})
+
+		go func() {
+			_ = b.Close()
+			close(closed)
+		}()
+
+		first.Disconnect(0)
+		second.Disconnect(0)
+
+		select {
+		case <-closed:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Close hung in round %d", round)
+		}
+	}
+}
+
+func TestClose_StopsAcceptingAndDisconnectsEveryone(t *testing.T) {
+	b, addr, rec := startBroker(t)
+
+	lost := make(chan struct{}, 1)
+	opts := paho.NewClientOptions().AddBroker("tcp://" + addr).SetClientID("c1").
+		SetUsername("garage1").SetPassword("secret1").SetAutoReconnect(false).
+		SetConnectionLostHandler(func(paho.Client, error) { lost <- struct{}{} })
+	client := paho.NewClient(opts)
+
+	if token := client.Connect(); !token.WaitTimeout(5*time.Second) || token.Error() != nil {
+		t.Fatalf("connect: %v", token.Error())
+	}
+
+	<-rec.connected
+
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-lost:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the device wasn't disconnected")
+	}
+
+	if conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("still accepting connections after Close")
+	}
+
+	// Closing twice is harmless.
+	_ = b.Close()
+}

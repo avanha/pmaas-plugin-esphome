@@ -179,7 +179,7 @@ func (r *registry) switchViews() []data.SwitchView {
 				DeviceName:      n.name,
 				ObjectID:        objectID,
 				DeviceConnected: connected,
-				CanControl:      connected && ch.disc.CommandTopic != "",
+				CanControl:      connected && ch.commandable(),
 				HasData:         sw.HasData,
 				State:           sw.State.String(),
 				StateClass:      strings.ToLower(sw.State.String()),

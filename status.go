@@ -23,6 +23,7 @@ func (p *plugin) getStatusAndEntities() common.StatusAndEntities {
 	status := data.PluginStatus{
 		BrokerRunning:     p.broker != nil,
 		BrokerProblem:     p.brokerProblem,
+		BrokerNotUsed:     p.brokerNotUsed,
 		ListenAddress:     listenAddress,
 		DiscoveryPrefix:   p.config.DiscoveryPrefix,
 		CaptureMessages:   p.config.CaptureMessages,
@@ -30,11 +31,33 @@ func (p *plugin) getStatusAndEntities() common.StatusAndEntities {
 		DoorSensorCount:   len(doors),
 		SwitchCount:       len(switches),
 		PowerMonitorCount: len(powers),
-		Devices:           make([]data.DeviceStatus, 0, len(p.config.Devices)),
 	}
+
+	// The MQTT devices, then the native API ones, each in the order configured.
+	var devices []data.DeviceStatus
 
 	for _, configured := range p.config.Devices {
 		device := p.registry.deviceStatus(configured.Name)
+		device.Transport = "MQTT"
+		devices = append(devices, device)
+	}
+
+	nativeDevices, _ := p.config.validNativeDevices()
+
+	for _, configured := range nativeDevices {
+		device := p.registry.deviceStatus(configured.Name)
+		device.Transport = "Native API"
+
+		if p.native != nil {
+			device.Problem = p.native.problem(configured.Name)
+		}
+
+		devices = append(devices, device)
+	}
+
+	status.Devices = make([]data.DeviceStatus, 0, len(devices))
+
+	for _, device := range devices {
 		status.Devices = append(status.Devices, device)
 
 		if device.Connected {

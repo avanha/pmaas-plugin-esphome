@@ -630,6 +630,13 @@ func TestEntityName(t *testing.T) {
 		{"garage1", "Left Garage Door", "garage1", "Left Garage Door"},
 		{"fan", "Temperature", "Attic Fan", "Attic Fan Temperature"},
 		{"fan", "Temperature", "", "fan Temperature"},
+		// A Kauf plug's relay is named for the device, which has the end of its MAC address on the end.
+		{"kauf-plug-7981c8", "Kauf Plug", "Kauf Plug 7981c8", "Kauf Plug 7981c8"},
+		{"kauf-plug-7981c8", "kauf plug", "Kauf Plug 7981c8", "Kauf Plug 7981c8"},
+		{"kauf-plug-7981c8", "Power", "Kauf Plug 7981c8", "Kauf Plug 7981c8 Power"},
+		// But only at a word boundary: "Kauf" isn't the start of "Kaufman Plug".
+		{"p", "Kauf", "Kaufman Plug", "Kaufman Plug Kauf"},
+		{"p", "Kauf Plug 7981c8 Extra", "Kauf Plug 7981c8", "Kauf Plug 7981c8 Extra"},
 	} {
 		e := entityForName(c.name, c.disc)
 		if got := r.entityName(c.device, e); got != c.want {

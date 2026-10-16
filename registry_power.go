@@ -230,6 +230,11 @@ func (r *registry) handlePowerSensorState(n *node, ch *powerSensorChannel, paylo
 		return
 	}
 
+	r.applyPowerValue(n, ch, value)
+}
+
+// applyPowerValue takes in a reading, in the sensor's own unit, however it arrived.
+func (r *registry) applyPowerValue(n *node, ch *powerSensorChannel, value float64) {
 	ch.value = ch.toBase(value)
 	ch.hasValue = true
 	ch.lastUpdate = r.now()
