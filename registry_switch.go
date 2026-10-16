@@ -74,7 +74,7 @@ func (r *registry) registerSwitch(n *node, ch *switchChannel) {
 	ch.sw = sw
 
 	if handle := r.handles[n.name]; handle != nil {
-		handle.switchRegistered(r.container, id, sw.Data.Name, sw.GetStub(r.container))
+		handle.switchRegistered(id, sw.Data.Name, sw.GetStub(r.container))
 	}
 }
 
