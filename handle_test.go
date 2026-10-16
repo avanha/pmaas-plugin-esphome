@@ -6,6 +6,7 @@ import (
 
 	"github.com/avanha/pmaas-spi/common"
 	"github.com/avanha/pmaas-spi/device"
+	"github.com/avanha/pmaas-spi/environment"
 )
 
 func (f *fixture) withHandle(deviceName string) *DeviceHandle {
@@ -204,3 +205,137 @@ func TestHandle_ASwitchToldOfTwiceIsKeptOnceWithTheLatestStub(t *testing.T) {
 }
 
 type stubSwitch struct{ device.ISwitch }
+
+func TestHandle_ADoorTakenBeforeTheDeviceHasConnectedLooksLikeASensorThatHasNotReported(t *testing.T) {
+	handle := newDeviceHandle("garage1")
+
+	for _, name := range []string{"", "Garage 1 Door"} {
+		got := handle.Door(name).GetDoorSensorData()
+		if got.Name != name || got.HasData || got.Position != device.DoorPositionUnknown {
+			t.Errorf("%q: %+v", name, got)
+		}
+	}
+}
+
+func TestHandle_TheSameDoorProxyWorksOnceTheDeviceHasAnnouncedTheSensor(t *testing.T) {
+	f := newFixture(t)
+	handle := f.withHandle("garage1")
+	door := handle.Door("")
+
+	f.registry.HandleConnected("garage1", "10.0.0.1")
+	f.discover("garage1", "binary_sensor", "door", doorConfig("garage1", "door", "Door"))
+	f.state("garage1", "garage1/binary_sensor/door/state", "ON")
+
+	got := door.GetDoorSensorData()
+	if got.Name != "Garage 1 Door" || !got.HasData || got.Position != device.DoorPositionOpen ||
+		got.Connectivity != environment.ConnectivityOnline {
+		t.Errorf("data %+v", got)
+	}
+
+	f.state("garage1", "garage1/binary_sensor/door/state", "OFF")
+
+	if got := handle.Door("Garage 1 Door").GetDoorSensorData(); got.Position != device.DoorPositionClosed {
+		t.Errorf("by name: %+v", got)
+	}
+
+	// The device drops off the network: the same proxy says so.
+	f.registry.HandleDisconnected("garage1")
+
+	if got := door.GetDoorSensorData(); got.Connectivity != environment.ConnectivityOffline {
+		t.Errorf("offline: %+v", got)
+	}
+}
+
+func TestHandle_DoorByNameOrTheOnlyOne(t *testing.T) {
+	f := newFixture(t)
+	handle := f.withHandle("garage1")
+	f.registry.HandleConnected("garage1", "10.0.0.1")
+	f.discover("garage1", "binary_sensor", "door", doorConfig("garage1", "door", "Door"))
+
+	if _, err := handle.findDoor("Nothing"); !errors.Is(err, errNoDoor) || !errors.Is(err, common.ErrStubNotAvailable) {
+		t.Errorf("an unknown name: %v", err)
+	}
+
+	f.discover("garage1", "binary_sensor", "side", doorConfig("garage1", "side", "Side Door"))
+
+	if _, err := handle.findDoor(""); !errors.Is(err, errSeveralDoors) {
+		t.Errorf("two sensors and no name: %v", err)
+	}
+
+	if got := handle.Door("").GetDoorSensorData(); got.HasData || got.Name != "" {
+		t.Errorf("data of an ambiguous sensor: %+v", got)
+	}
+
+	if _, err := handle.findDoor("Garage 1 Side Door"); err != nil {
+		t.Errorf("by name: %v", err)
+	}
+
+	empty := newDeviceHandle("none")
+	if _, err := empty.findDoor(""); !errors.Is(err, errNoDoor) || !errors.Is(err, common.ErrStubNotAvailable) {
+		t.Errorf("no sensors: %v", err)
+	}
+}
+
+func TestHandle_ARemovedDoorSensorIsGoneFromTheHandleAndFoundAgainWhenAnnouncedAgain(t *testing.T) {
+	f := newFixture(t)
+	handle := f.withHandle("garage1")
+	f.registry.HandleConnected("garage1", "10.0.0.1")
+	f.discover("garage1", "binary_sensor", "door", doorConfig("garage1", "door", "Door"))
+	door := handle.Door("")
+
+	f.registry.HandleMessage("garage1", "homeassistant/binary_sensor/garage1/door/config", nil)
+
+	if got := door.GetDoorSensorData(); got.HasData {
+		t.Fatalf("a removed sensor still answers: %+v", got)
+	}
+
+	f.discover("garage1", "binary_sensor", "door", doorConfig("garage1", "door", "Door"))
+	f.state("garage1", "garage1/binary_sensor/door/state", "ON")
+
+	if got := door.GetDoorSensorData(); got.Position != device.DoorPositionOpen {
+		t.Errorf("after being announced again: %+v", got)
+	}
+}
+
+func TestHandle_ARenamedDoorSensorIsFoundByItsNewName(t *testing.T) {
+	f := newFixture(t)
+	handle := f.withHandle("garage1")
+	f.discover("garage1", "binary_sensor", "door", doorConfig("garage1", "door", "Door"))
+	f.discover("garage1", "binary_sensor", "door", doorConfig("garage1", "door", "Bay Door"))
+
+	if _, err := handle.findDoor("Garage 1 Bay Door"); err != nil {
+		t.Errorf("by its new name: %v", err)
+	}
+
+	if _, err := handle.findDoor("Garage 1 Door"); !errors.Is(err, errNoDoor) {
+		t.Errorf("by its old name: %v", err)
+	}
+}
+
+func TestHandle_ShuttingDownTakesTheDoorStubsBackToo(t *testing.T) {
+	f := newFixture(t)
+	handle := f.withHandle("garage1")
+	f.discover("garage1", "binary_sensor", "door", doorConfig("garage1", "door", "Door"))
+	door := handle.Door("")
+
+	f.registry.Shutdown()
+
+	if got := door.GetDoorSensorData(); got.HasData {
+		t.Errorf("after shutdown: %+v", got)
+	}
+}
+
+func TestHandle_ADoorToldOfTwiceIsKeptOnceWithTheLatestStub(t *testing.T) {
+	handle := newDeviceHandle("garage1")
+
+	var first, second device.IDoorSensor = &stubDoor{}, &stubDoor{}
+	handle.doorRegistered("id1", "Door", first)
+	handle.doorRegistered("id1", "Door", second)
+
+	got, err := handle.findDoor("")
+	if err != nil || got != second {
+		t.Errorf("got %v, %v", got, err)
+	}
+}
+
+type stubDoor struct{ device.IDoorSensor }

@@ -13,6 +13,8 @@ import (
 var (
 	errNoSwitch        = errors.New("the device has no such switch")
 	errSeveralSwitches = errors.New("the device has several switches, so say which")
+	errNoDoor          = errors.New("the device has no such door sensor")
+	errSeveralDoors    = errors.New("the device has several door sensors, so say which")
 )
 
 // DeviceHandle is the assembly's handle on a device it configured, for using the device's entities from the
@@ -27,6 +29,7 @@ type DeviceHandle struct {
 
 	mu       sync.Mutex
 	switches []*handleSwitch
+	doors    []*handleDoor
 }
 
 type handleSwitch struct {
@@ -135,4 +138,92 @@ func (p *switchProxy) SetState(state device.SwitchState) error {
 	}
 
 	return stub.SetState(state)
+}
+
+type handleDoor struct {
+	id   string
+	name string
+	stub device.IDoorSensor
+}
+
+// Door is one of the device's door sensors, by its name as shown on the page, or the device's only door sensor if name is
+// empty. Which one is worked out at each call, from what the device has announced by then, so it works from the moment the
+// device has connected and announced it, and the same one keeps working if the device goes away and comes back. Until then
+// it answers as a sensor that has not reported anything.
+func (h *DeviceHandle) Door(name string) device.IDoorSensor {
+	return &doorProxy{handle: h, name: name}
+}
+
+// findDoor is the stub of the door sensor name stands for, or an error saying why there isn't one.
+func (h *DeviceHandle) findDoor(name string) (device.IDoorSensor, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if name == "" {
+		switch len(h.doors) {
+		case 0:
+			return nil, fmt.Errorf("%s: %w: %w", h.name, errNoDoor, common.ErrStubNotAvailable)
+		case 1:
+			return h.doors[0].stub, nil
+		default:
+			return nil, fmt.Errorf("%s: %w", h.name, errSeveralDoors)
+		}
+	}
+
+	for _, candidate := range h.doors {
+		if candidate.name == name {
+			return candidate.stub, nil
+		}
+	}
+
+	return nil, fmt.Errorf("%s: %q: %w: %w", h.name, name, errNoDoor, common.ErrStubNotAvailable)
+}
+
+// doorRegistered is for the registry: a door sensor has been registered, and here is its stub. Called on the plugin goroutine.
+func (h *DeviceHandle) doorRegistered(id string, name string, stub device.IDoorSensor) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.doors = slices.DeleteFunc(h.doors, func(d *handleDoor) bool { return d.id == id })
+	h.doors = append(h.doors, &handleDoor{id: id, name: name, stub: stub})
+}
+
+// doorRenamed is for the registry: the door sensor has a new name.
+func (h *DeviceHandle) doorRenamed(id string, name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, d := range h.doors {
+		if d.id == id {
+			d.name = name
+		}
+	}
+}
+
+// doorDeregistered is for the registry: the door sensor is gone, and its stub mustn't be used again.
+func (h *DeviceHandle) doorDeregistered(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.doors = slices.DeleteFunc(h.doors, func(d *handleDoor) bool { return d.id == id })
+}
+
+// doorProxy is a device.IDoorSensor for a door sensor that may not exist yet. It forwards to the sensor's stub, looked up at
+// each call.
+type doorProxy struct {
+	handle *DeviceHandle
+	name   string
+}
+
+var _ device.IDoorSensor = (*doorProxy)(nil)
+
+// GetDoorSensorData is the sensor's data, or, when there is no sensor to ask, a DoorSensor that has not reported anything,
+// which is how a sensor that is not there yet looks.
+func (p *doorProxy) GetDoorSensorData() device.DoorSensor {
+	stub, err := p.handle.findDoor(p.name)
+	if err != nil {
+		return device.DoorSensor{Name: p.name}
+	}
+
+	return stub.GetDoorSensorData()
 }

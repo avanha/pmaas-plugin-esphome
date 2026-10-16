@@ -227,7 +227,7 @@ func (r *registry) Shutdown() {
 		}
 
 		for _, ch := range n.doors {
-			r.deregisterDoor(ch)
+			r.deregisterDoor(n, ch)
 		}
 
 		for _, ch := range n.switches {
@@ -418,6 +418,11 @@ func (r *registry) upsertDoor(n *node, e hadiscovery.Entity) {
 	// Already registered: only a changed name is worth telling anyone.
 	if name := r.entityName(n.name, e); name != ch.door.Data.Name {
 		ch.door.Data.Name = name
+
+		if handle := r.handles[n.name]; handle != nil {
+			handle.doorRenamed(ch.door.PmaasEntityId, name)
+		}
+
 		r.broadcastState(ch.door.PmaasEntityId, device.IDoorSensorType, name, ch.door.Data)
 	}
 }
@@ -451,7 +456,7 @@ func (r *registry) removeChannel(n *node, key hadiscovery.Key) {
 		}
 	case "binary_sensor":
 		if ch, ok := n.doors[key.ObjectID]; ok {
-			r.deregisterDoor(ch)
+			r.deregisterDoor(n, ch)
 			delete(n.doors, key.ObjectID)
 		}
 	}
@@ -736,11 +741,19 @@ func (r *registry) registerDoor(n *node, ch *doorChannel) {
 
 	d.PmaasEntityId = id
 	ch.door = d
+
+	if handle := r.handles[n.name]; handle != nil {
+		handle.doorRegistered(id, d.Data.Name, d.GetStub(r.container))
+	}
 }
 
-func (r *registry) deregisterDoor(ch *doorChannel) {
+func (r *registry) deregisterDoor(n *node, ch *doorChannel) {
 	if ch.door == nil {
 		return
+	}
+
+	if handle := r.handles[n.name]; handle != nil {
+		handle.doorDeregistered(ch.door.PmaasEntityId)
 	}
 
 	if err := r.container.DeregisterEntity(ch.door.PmaasEntityId); err != nil {
