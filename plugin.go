@@ -61,6 +61,7 @@ func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.container = container
 	p.registry = newRegistry(container, p.config.DiscoveryPrefix, p.config.displayNames())
 	p.registry.control, _ = p.config.switchControls() // what's wrong with it is reported when the plugin starts
+	p.registry.handles = p.config.handles
 	p.registry.publish = p.publishCommand
 	p.registry.nativeSend = p.sendNative
 	p.httpHandler.Init(container, &entityStoreAdapter{parent: p})

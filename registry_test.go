@@ -41,6 +41,9 @@ type fakeContainer struct {
 	broadcasts    []broadcast
 	registerErr   error
 
+	// What the registry asked the server's goroutine to run, one batch per call.
+	serverBatches [][]func()
+
 	// What Init registers for the status page.
 	routes        map[string]*spi.HttpHandlerOptions
 	jsonRoutes    map[string]spi.JsonHandlerFunc
@@ -49,6 +52,12 @@ type fakeContainer struct {
 }
 
 func (c *fakeContainer) ProvideContentFS(fs.FS, string) {}
+
+func (c *fakeContainer) EnqueueOnServerGoRoutine(invocations []func()) error {
+	c.serverBatches = append(c.serverBatches, invocations)
+
+	return nil
+}
 
 func (c *fakeContainer) EnableStaticContent(staticContentDir string) { c.staticDir = staticContentDir }
 

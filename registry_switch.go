@@ -45,6 +45,11 @@ func (r *registry) upsertSwitch(n *node, e hadiscovery.Entity) {
 	// ch.disc each time they're used, so a changed one takes effect without anything else.
 	if name := r.entityName(n.name, e); name != ch.sw.Data.Name {
 		ch.sw.Data.Name = name
+
+		if handle := r.handles[n.name]; handle != nil {
+			handle.switchRenamed(ch.sw.PmaasEntityId, name)
+		}
+
 		r.broadcastState(ch.sw.PmaasEntityId, device.ISwitchType, name, ch.sw.Data)
 	}
 }
@@ -67,11 +72,19 @@ func (r *registry) registerSwitch(n *node, ch *switchChannel) {
 
 	sw.PmaasEntityId = id
 	ch.sw = sw
+
+	if handle := r.handles[n.name]; handle != nil {
+		handle.switchRegistered(r.container, id, sw.Data.Name, sw.GetStub(r.container))
+	}
 }
 
-func (r *registry) deregisterSwitch(ch *switchChannel) {
+func (r *registry) deregisterSwitch(n *node, ch *switchChannel) {
 	if ch.sw == nil {
 		return
+	}
+
+	if handle := r.handles[n.name]; handle != nil {
+		handle.switchDeregistered(ch.sw.PmaasEntityId)
 	}
 
 	if err := r.container.DeregisterEntity(ch.sw.PmaasEntityId); err != nil {

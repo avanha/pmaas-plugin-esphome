@@ -45,6 +45,10 @@ type registry struct {
 	// nativeSend sends a message to a device over the native API, and like publish returns once it's queued.
 	nativeSend func(deviceName string, message proto.Message) error
 
+	// handles are the assembly's handles on the devices, by name, for those it asked for. They're told when a
+	// device's switches come and go.
+	handles map[string]*DeviceHandle
+
 	logf func(format string, args ...any)
 	now  func() time.Time
 }
@@ -227,7 +231,7 @@ func (r *registry) Shutdown() {
 		}
 
 		for _, ch := range n.switches {
-			r.deregisterSwitch(ch)
+			r.deregisterSwitch(n, ch)
 		}
 
 		r.deregisterPowerMonitor(n)
@@ -442,7 +446,7 @@ func (r *registry) removeChannel(n *node, key hadiscovery.Key) {
 		}
 	case "switch":
 		if ch, ok := n.switches[key.ObjectID]; ok {
-			r.deregisterSwitch(ch)
+			r.deregisterSwitch(n, ch)
 			delete(n.switches, key.ObjectID)
 		}
 	case "binary_sensor":

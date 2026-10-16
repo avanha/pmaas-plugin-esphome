@@ -128,6 +128,10 @@ type PluginConfig struct {
 	// NativeDevices lists the devices PMAAS connects to over the native API.
 	NativeDevices []NativeDeviceConfig
 
+	// handles are the assembly's handles on the devices, by the device's name, as AddDevice and AddNativeDevice
+	// return them. The plugin copies the configuration, and the copy shares this map.
+	handles map[string]*DeviceHandle
+
 	// CaptureMessages logs every message a device publishes. It's for working out what a new kind
 	// of device actually sends; leave it off otherwise.
 	CaptureMessages bool
@@ -188,14 +192,35 @@ func (c PluginConfig) deviceCredentials() (map[string]string, error) {
 	return credentials, nil
 }
 
-// AddDevice allows a device to connect.
-func (c *PluginConfig) AddDevice(device DeviceConfig) {
+// AddDevice allows a device to connect. The handle it returns is for getting at the device's entities from the
+// assembly, and can be ignored.
+func (c *PluginConfig) AddDevice(device DeviceConfig) *DeviceHandle {
 	c.Devices = append(c.Devices, device)
+
+	return c.handleFor(device.Name)
 }
 
-// AddNativeDevice adds a device to connect to over the native API.
-func (c *PluginConfig) AddNativeDevice(device NativeDeviceConfig) {
+// AddNativeDevice adds a device to connect to over the native API. The handle it returns is for getting at the
+// device's entities from the assembly, and can be ignored.
+func (c *PluginConfig) AddNativeDevice(device NativeDeviceConfig) *DeviceHandle {
 	c.NativeDevices = append(c.NativeDevices, device)
+
+	return c.handleFor(device.Name)
+}
+
+// handleFor is the handle for the named device, made the first time it's asked for.
+func (c *PluginConfig) handleFor(name string) *DeviceHandle {
+	if c.handles == nil {
+		c.handles = make(map[string]*DeviceHandle)
+	}
+
+	handle, ok := c.handles[name]
+	if !ok {
+		handle = newDeviceHandle(name)
+		c.handles[name] = handle
+	}
+
+	return handle
 }
 
 // validNativeDevices returns the native devices that can be connected to, and a description of what's wrong with
