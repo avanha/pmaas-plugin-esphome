@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/avanha/pmaas-plugin-esphome/internal/nativeapi"
+
+	"github.com/avanha/pmaas-spi/alert"
 )
 
 // defaultNativeAPIPort is the port ESPHome devices serve the native API on.
@@ -74,6 +76,10 @@ type DeviceConfig struct {
 
 	// Control is how carefully the device's switches are guarded. The default is ControlOpen.
 	Control SwitchControl
+
+	// OfflineAlert raises an alert while the device is offline, if it is set with alert.WhenOffline: after how long, and
+	// how severe. The default is no alert.
+	OfflineAlert alert.OfflineAlert
 }
 
 // NativeDeviceConfig is one ESPHome device that PMAAS connects to over the native API, which is what stock
@@ -98,6 +104,11 @@ type NativeDeviceConfig struct {
 
 	// Control is how carefully the device's switches are guarded. The default is ControlOpen.
 	Control SwitchControl
+
+	// OfflineAlert raises an alert while the device is offline, if it is set with alert.WhenOffline: after how long, and
+	// how severe. The default is no alert. A device that has never connected counts as offline from when the plugin
+	// started.
+	OfflineAlert alert.OfflineAlert
 }
 
 // dialAddress is Address with the default port added if it has none.
@@ -174,6 +185,25 @@ func (c PluginConfig) displayNames() map[string]string {
 	}
 
 	return names
+}
+
+// offlineAlerts is the alert each device is to have for going offline, by the device's name, for those that are to have one.
+func (c PluginConfig) offlineAlerts() map[string]alert.OfflineAlert {
+	alerts := make(map[string]alert.OfflineAlert)
+
+	for _, device := range c.Devices {
+		if device.OfflineAlert.Enabled() {
+			alerts[device.Name] = device.OfflineAlert
+		}
+	}
+
+	for _, device := range c.NativeDevices {
+		if device.OfflineAlert.Enabled() {
+			alerts[device.Name] = device.OfflineAlert
+		}
+	}
+
+	return alerts
 }
 
 // deviceCredentials maps each device's name to its password. It's an error for a name to appear more

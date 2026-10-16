@@ -13,6 +13,7 @@ import (
 	"github.com/avanha/pmaas-plugin-esphome/internal/entities"
 	"github.com/avanha/pmaas-plugin-esphome/internal/hadiscovery"
 	spi "github.com/avanha/pmaas-spi"
+	"github.com/avanha/pmaas-spi/alert"
 	"github.com/avanha/pmaas-spi/device"
 	"github.com/avanha/pmaas-spi/environment"
 	"github.com/avanha/pmaas-spi/events"
@@ -48,6 +49,13 @@ type registry struct {
 	// handles are the assembly's handles on the devices, by name, for those it asked for. They're told when a
 	// device's switches come and go.
 	handles map[string]*DeviceHandle
+
+	// offlineAlerts is the alert each device is to have for going offline, and offlineWatches what holds it, by the
+	// device's name. startedAt is when the plugin started, which is when a device that has never connected has been offline
+	// since.
+	offlineAlerts  map[string]alert.OfflineAlert
+	offlineWatches map[string]*alert.OfflineWatch
+	startedAt      time.Time
 
 	logf func(format string, args ...any)
 	now  func() time.Time
@@ -136,6 +144,53 @@ func (r *registry) nodeFor(name string) *node {
 	return n
 }
 
+// startOfflineWatches makes what holds each device's alert for going offline. Called when the plugin starts.
+func (r *registry) startOfflineWatches() {
+	r.startedAt = r.now()
+	r.offlineWatches = make(map[string]*alert.OfflineWatch, len(r.offlineAlerts))
+
+	for name, policy := range r.offlineAlerts {
+		shown := name
+		if display, ok := r.displayNames[name]; ok {
+			shown = display
+		}
+
+		r.offlineWatches[name] = policy.Watch("esphome", "offline:"+name, shown)
+	}
+
+	r.checkOfflineAlerts()
+}
+
+// checkOfflineAlerts looks at every device that is to have an alert for going offline: one that has been offline for
+// the alert's time is due one without anything having changed, so this is also done regularly.
+func (r *registry) checkOfflineAlerts() {
+	for name := range r.offlineWatches {
+		r.checkOffline(name)
+	}
+}
+
+// checkOffline raises, escalates or clears one device's alert for going offline, if it is to have one.
+func (r *registry) checkOffline(device string) {
+	watch := r.offlineWatches[device]
+	if watch == nil || r.stopped {
+		return
+	}
+
+	connectivity, since := environment.ConnectivityOffline, r.startedAt
+
+	if n, ok := r.nodes[device]; ok {
+		if n.connected {
+			connectivity = environment.ConnectivityOnline
+		} else if !n.offlineSince.IsZero() {
+			since = n.offlineSince
+		}
+	}
+
+	if err := watch.Check(r.container, connectivity, since, r.now()); err != nil {
+		r.logf("%s: unable to update the alert about it being offline: %v", device, err)
+	}
+}
+
 // HandleConnected records that a device's session started.
 func (r *registry) HandleConnected(device string, address string) {
 	if r.stopped {
@@ -150,6 +205,7 @@ func (r *registry) HandleConnected(device string, address string) {
 	n.address = address
 
 	r.updateConnectivity(n)
+	r.checkOffline(device)
 }
 
 // HandleDisconnected records that a device's session ended. Its entities stay registered, marked
@@ -166,6 +222,7 @@ func (r *registry) HandleDisconnected(device string) {
 	n.offlineSince = r.now()
 
 	r.updateConnectivity(n)
+	r.checkOffline(device)
 }
 
 // HandleMessage processes one message a device published.

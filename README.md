@@ -91,6 +91,24 @@ Readings are converted to watts, volts, amps and kilowatt-hours whatever unit th
 sensors of one kind the first by object id is used. What energy counts from (the device's lifetime, or since
 midnight) is up to the device.
 
+## Alerting when a device goes offline
+
+A device can raise an alert on the alert console while it is offline. It is off unless a device asks for it, with
+`alert.WhenOffline` from `pmaas-spi/alert`, on either kind of device:
+
+```go
+conf.AddDevice(esphome.DeviceConfig{
+	Name: "garagedoor1", Password: "...",
+	OfflineAlert: alert.WhenOffline(5*time.Minute, alert.Always(alert.SeverityCritical)),
+})
+```
+
+The first argument is how long the device has to have been offline (zero is as soon as it is noticed). The second says how
+severe the alert is, and may depend on the time of day (`alert.ByTimeOfDay`); with `nil` it is a warning. The alert clears
+when the device connects again. A device that has never connected counts as offline from when the plugin started. The
+alert is `esphome` / `offline:<device name>`, and is looked at once a minute as well as when the device connects or
+disconnects, so that it comes due without anything happening.
+
 ## The status page
 
 The **ESPHome** entry in the menu opens a page like the other plugins': a status bar, then a card for each device.

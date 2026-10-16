@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/avanha/pmaas-common/mailbox"
 	"github.com/avanha/pmaas-plugin-esphome/internal/broker"
@@ -44,13 +46,19 @@ type plugin struct {
 	listenAddress string
 	brokerProblem string
 	brokerNotUsed bool
+
+	// checkOfflineEvery is how often the devices with an alert for going offline are looked at again, and
+	// cancelOfflineChecks stops that. offlineChecks is the goroutine that does it.
+	checkOfflineEvery   time.Duration
+	cancelOfflineChecks context.CancelFunc
+	offlineChecks       sync.WaitGroup
 }
 
 // Force implementation of spi.IPMAASPlugin
 var _ spi.IPMAASPlugin = (*plugin)(nil)
 
 func NewPlugin(config PluginConfig) Plugin {
-	return &plugin{config: config.withDefaults(), httpHandler: httphandler.NewHandler()}
+	return &plugin{config: config.withDefaults(), httpHandler: httphandler.NewHandler(), checkOfflineEvery: time.Minute}
 }
 
 func (p *plugin) ShortName() string {
@@ -62,29 +70,30 @@ func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.registry = newRegistry(container, p.config.DiscoveryPrefix, p.config.displayNames())
 	p.registry.control, _ = p.config.switchControls() // what's wrong with it is reported when the plugin starts
 	p.registry.handles = p.config.handles
+	p.registry.offlineAlerts = p.config.offlineAlerts()
 	p.registry.publish = p.publishCommand
 	p.registry.nativeSend = p.sendNative
 	p.httpHandler.Init(container, &entityStoreAdapter{parent: p})
 }
 
 func (p *plugin) Start() {
-	fmt.Printf("%T Starting...\n", *p)
+	fmt.Printf("%T Starting...\n", p)
 
 	p.listenAddress = p.config.ListenAddress
 
 	nativeDevices, problems := p.config.validNativeDevices()
 	for _, problem := range problems {
-		fmt.Printf("%T ERROR: %s\n", *p, problem)
+		fmt.Printf("%T ERROR: %s\n", p, problem)
 	}
 
 	_, controlProblems := p.config.switchControls()
 	for _, problem := range controlProblems {
-		fmt.Printf("%T ERROR: %s\n", *p, problem)
+		fmt.Printf("%T ERROR: %s\n", p, problem)
 	}
 
 	if len(p.config.Devices) == 0 && len(nativeDevices) == 0 {
 		p.brokerProblem = "no devices are configured"
-		fmt.Printf("%T WARNING: no devices configured, not starting the MQTT broker\n", *p)
+		fmt.Printf("%T WARNING: no devices configured, not starting the MQTT broker\n", p)
 
 		return
 	}
@@ -93,6 +102,35 @@ func (p *plugin) Start() {
 
 	p.startMQTT()
 	p.startNative(nativeDevices)
+	p.startOfflineChecks()
+}
+
+// startOfflineChecks has the alerts for devices going offline looked at regularly: one that waits for a device to have been
+// offline for a time comes due with nothing happening.
+func (p *plugin) startOfflineChecks() {
+	p.registry.startOfflineWatches()
+
+	if len(p.registry.offlineWatches) == 0 {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancelOfflineChecks = cancel
+
+	p.offlineChecks.Go(func() {
+		ticker := time.NewTicker(p.checkOfflineEvery)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// If the plugin has stopped there is nothing to look at, and the tick is dropped.
+				_ = p.container.EnqueueOnPluginGoRoutine(p.registry.checkOfflineAlerts)
+			}
+		}
+	})
 }
 
 // startMQTT starts the broker, if there are MQTT devices for it to serve.
@@ -105,7 +143,7 @@ func (p *plugin) startMQTT() {
 	mqttBroker, address, err := p.startBroker()
 	if err != nil {
 		p.brokerProblem = err.Error()
-		fmt.Printf("%T ERROR: not starting the MQTT broker: %v\n", *p, err)
+		fmt.Printf("%T ERROR: not starting the MQTT broker: %v\n", p, err)
 
 		return
 	}
@@ -113,7 +151,7 @@ func (p *plugin) startMQTT() {
 	p.broker = mqttBroker
 	p.listenAddress = address.String()
 
-	fmt.Printf("%T MQTT broker listening on %s for %d device(s)\n", *p, address, len(p.config.Devices))
+	fmt.Printf("%T MQTT broker listening on %s for %d device(s)\n", p, address, len(p.config.Devices))
 }
 
 // startNative connects to the devices reached over the native API.
@@ -130,7 +168,7 @@ func (p *plugin) startNative(devices []NativeDeviceConfig) {
 
 	p.native.Start()
 
-	fmt.Printf("%T connecting to %d device(s) over the native API\n", *p, len(devices))
+	fmt.Printf("%T connecting to %d device(s) over the native API\n", p, len(devices))
 }
 
 // nativeCallbacks hands everything the native API connections report over to the plugin goroutine, the same way
@@ -279,7 +317,7 @@ func (p *plugin) brokerCallbacks() broker.Callbacks {
 func (p *plugin) enqueue(f func()) {
 	if err := p.container.EnqueueOnPluginGoRoutine(f); err != nil {
 		// The plugin is stopping; there's nothing left to tell.
-		fmt.Printf("%T dropping broker event: %v\n", *p, err)
+		fmt.Printf("%T dropping broker event: %v\n", p, err)
 	}
 }
 
@@ -288,7 +326,7 @@ func (p *plugin) enqueue(f func()) {
 // Entities are deregistered here, and the broker is closed on a background goroutine; the returned
 // channel closes when that's done, and the plugin goroutine is free in the meantime.
 func (p *plugin) Stop() chan func() {
-	fmt.Printf("%T Stopping...\n", *p)
+	fmt.Printf("%T Stopping...\n", p)
 
 	// Deregister every entity, and from here on ignore anything devices still send. This only touches
 	// state owned by this goroutine and doesn't wait on anything, so it's safe to do right here.
@@ -303,8 +341,15 @@ func (p *plugin) Stop() chan func() {
 	commands := p.outbox
 	p.outbox = nil
 
+	if p.cancelOfflineChecks != nil {
+		p.cancelOfflineChecks()
+		p.cancelOfflineChecks = nil
+	}
+
 	// Nothing ever started (nothing was configured, or startup failed), so there's nothing to wait for.
 	if broker == nil && nativeDevices == nil && commands == nil {
+		p.offlineChecks.Wait()
+
 		return p.container.ClosedCallbackChannel()
 	}
 
@@ -315,6 +360,8 @@ func (p *plugin) Stop() chan func() {
 
 	go func() {
 		defer close(done)
+
+		p.offlineChecks.Wait()
 
 		// Hand the commands already queued on first, while there's still somewhere to send them. That's all
 		// that's promised: the connection may be closed before a message reaches the device.
@@ -328,7 +375,7 @@ func (p *plugin) Stop() chan func() {
 
 		if broker != nil {
 			if err := broker.Close(); err != nil {
-				fmt.Printf("%T error closing the MQTT broker: %v\n", *p, err)
+				fmt.Printf("%T error closing the MQTT broker: %v\n", p, err)
 			}
 		}
 	}()
