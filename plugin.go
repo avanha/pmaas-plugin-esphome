@@ -7,13 +7,13 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"sync"
-	"time"
 
 	"github.com/avanha/pmaas-common/mailbox"
 	"github.com/avanha/pmaas-plugin-esphome/internal/broker"
 	httphandler "github.com/avanha/pmaas-plugin-esphome/internal/http"
 	spi "github.com/avanha/pmaas-spi"
+	"github.com/avanha/pmaas-spi/clock"
+	"github.com/avanha/pmaas-spi/events"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -47,18 +47,17 @@ type plugin struct {
 	brokerProblem string
 	brokerNotUsed bool
 
-	// checkOfflineEvery is how often the devices with an alert for going offline are looked at again, and
-	// cancelOfflineChecks stops that. offlineChecks is the goroutine that does it.
-	checkOfflineEvery   time.Duration
-	cancelOfflineChecks context.CancelFunc
-	offlineChecks       sync.WaitGroup
+	// clockReceiver is the registration to be told each minute, which is what has the devices with an alert for going
+	// offline looked at again.
+	clockReceiver           int
+	clockReceiverRegistered bool
 }
 
 // Force implementation of spi.IPMAASPlugin
 var _ spi.IPMAASPlugin = (*plugin)(nil)
 
 func NewPlugin(config PluginConfig) Plugin {
-	return &plugin{config: config.withDefaults(), httpHandler: httphandler.NewHandler(), checkOfflineEvery: time.Minute}
+	return &plugin{config: config.withDefaults(), httpHandler: httphandler.NewHandler()}
 }
 
 func (p *plugin) ShortName() string {
@@ -105,8 +104,8 @@ func (p *plugin) Start() {
 	p.startOfflineChecks()
 }
 
-// startOfflineChecks has the alerts for devices going offline looked at regularly: one that waits for a device to have been
-// offline for a time comes due with nothing happening.
+// startOfflineChecks has the alerts for devices going offline looked at each minute, by the clock's event: one that waits for
+// a device to have been offline for a time comes due with nothing happening.
 func (p *plugin) startOfflineChecks() {
 	p.registry.startOfflineWatches()
 
@@ -114,23 +113,29 @@ func (p *plugin) startOfflineChecks() {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	p.cancelOfflineChecks = cancel
+	handle, err := p.container.RegisterEventReceiver(isMinuteChanged, p.onClockEvent)
+	if err != nil {
+		fmt.Printf("%T unable to register for clock events, so offline alerts will only follow connections: %v\n", p, err)
 
-	p.offlineChecks.Go(func() {
-		ticker := time.NewTicker(p.checkOfflineEvery)
-		defer ticker.Stop()
+		return
+	}
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				// If the plugin has stopped there is nothing to look at, and the tick is dropped.
-				_ = p.container.EnqueueOnPluginGoRoutine(p.registry.checkOfflineAlerts)
-			}
-		}
-	})
+	p.clockReceiver, p.clockReceiverRegistered = handle, true
+}
+
+func isMinuteChanged(eventInfo *events.EventInfo) bool {
+	_, ok := eventInfo.Event.(clock.MinuteChangedEvent)
+
+	return ok
+}
+
+// onClockEvent is told each minute, on the plugin goroutine.
+func (p *plugin) onClockEvent(eventInfo *events.EventInfo) error {
+	if _, ok := eventInfo.Event.(clock.MinuteChangedEvent); ok {
+		p.registry.checkOfflineAlerts()
+	}
+
+	return nil
 }
 
 // startMQTT starts the broker, if there are MQTT devices for it to serve.
@@ -341,15 +346,16 @@ func (p *plugin) Stop() chan func() {
 	commands := p.outbox
 	p.outbox = nil
 
-	if p.cancelOfflineChecks != nil {
-		p.cancelOfflineChecks()
-		p.cancelOfflineChecks = nil
+	if p.clockReceiverRegistered {
+		p.clockReceiverRegistered = false
+
+		if err := p.container.DeregisterEventReceiver(p.clockReceiver); err != nil {
+			fmt.Printf("%T unable to deregister the clock event receiver: %v\n", p, err)
+		}
 	}
 
 	// Nothing ever started (nothing was configured, or startup failed), so there's nothing to wait for.
 	if broker == nil && nativeDevices == nil && commands == nil {
-		p.offlineChecks.Wait()
-
 		return p.container.ClosedCallbackChannel()
 	}
 
@@ -360,8 +366,6 @@ func (p *plugin) Stop() chan func() {
 
 	go func() {
 		defer close(done)
-
-		p.offlineChecks.Wait()
 
 		// Hand the commands already queued on first, while there's still somewhere to send them. That's all
 		// that's promised: the connection may be closed before a message reaches the device.

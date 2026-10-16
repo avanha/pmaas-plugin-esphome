@@ -2,10 +2,11 @@ package esphome
 
 import (
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/avanha/pmaas-spi/alert"
+	"github.com/avanha/pmaas-spi/clock"
+	"github.com/avanha/pmaas-spi/events"
 )
 
 func offlineFixture(t *testing.T, policy alert.OfflineAlert) *fixture {
@@ -129,66 +130,63 @@ func TestPluginConfig_OfflineAlertsAreThoseSetOnMqttAndNativeDevices(t *testing.
 	}
 }
 
-func TestOfflineChecks_AnAlertWaitingForItsTimeComesDueOnTheVirtualClockWithNothingHappening(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		container := &fakeContainer{}
-		p := &plugin{container: container, checkOfflineEvery: time.Minute}
-		p.registry = newRegistry(container, "homeassistant", nil)
-		p.registry.offlineAlerts = map[string]alert.OfflineAlert{"garage1": alert.WhenOffline(5*time.Minute, nil)}
+func TestOfflineChecks_AnAlertWaitingForItsTimeComesDueOnTheMinuteEventWithNothingElseHappening(t *testing.T) {
+	f := newFixture(t)
+	p := &plugin{container: f.container, registry: f.registry}
+	f.registry.offlineAlerts = map[string]alert.OfflineAlert{"garage1": alert.WhenOffline(5*time.Minute, nil)}
 
-		p.startOfflineChecks()
+	p.startOfflineChecks()
 
-		time.Sleep(4*time.Minute + 30*time.Second)
-		synctest.Wait()
+	if f.container.receiver == nil {
+		t.Fatal("not listening for the clock")
+	}
 
-		if len(container.broadcasts) != 0 {
-			t.Fatalf("too early: %+v", container.broadcasts)
+	minute := func() {
+		f.advance(time.Minute)
+
+		if err := f.container.receiver(&events.EventInfo{Event: clock.MinuteChangedEvent{Time: f.clock}}); err != nil {
+			t.Fatal(err)
 		}
+	}
 
-		time.Sleep(time.Minute)
-		synctest.Wait()
+	for range 4 {
+		minute()
+	}
 
-		if len(container.broadcasts) != 1 {
-			t.Fatalf("broadcasts %+v", container.broadcasts)
-		}
+	if raised, _ := f.raised(); len(raised) != 0 {
+		t.Fatalf("too early: %+v", raised)
+	}
 
-		p.cancelOfflineChecks()
-		p.offlineChecks.Wait()
-	})
-}
-
-func TestOfflineAlert_ADisconnectIsActedOnAtOnceNotAtTheNextLook(t *testing.T) {
-	f := offlineFixture(t, alert.WhenOffline(0, nil))
-	f.registry.HandleConnected("garage1", "10.0.0.1")
-	f.container.broadcasts = nil // the alert for not having connected yet, and its clearing
-
-	f.registry.HandleDisconnected("garage1")
+	minute()
 
 	if raised, _ := f.raised(); len(raised) != 1 {
-		t.Errorf("raised %+v", raised)
+		t.Fatalf("raised %+v", raised)
 	}
+
+	// Another kind of event is not a reason to look.
+	_ = f.container.receiver(&events.EventInfo{Event: "something else"})
 }
 
-func TestOfflineAlert_AStoppedRegistryRaisesNothingEvenIfAskedToLook(t *testing.T) {
-	f := offlineFixture(t, alert.WhenOffline(0, nil))
-	f.registry.HandleConnected("garage1", "10.0.0.1")
-	f.container.broadcasts = nil
-	f.registry.Shutdown()
-	f.registry.checkOfflineAlerts()
+func TestOfflineChecks_NoClockListenerWithoutAnAlertAskedFor_AndItIsGivenBackOnStop(t *testing.T) {
+	f := newFixture(t)
+	p := &plugin{container: f.container, registry: f.registry}
 
-	if raised, _ := f.raised(); len(raised) != 0 {
-		t.Errorf("raised after shutdown: %+v", raised)
+	p.startOfflineChecks()
+
+	if f.container.receiver != nil {
+		t.Error("listening with nothing to look at")
 	}
-}
 
-func TestOfflineAlert_ADeviceKnownFromItsMessagesButNeverConnectedIsOfflineSinceStartToo(t *testing.T) {
-	f := offlineFixture(t, alert.WhenOffline(10*time.Minute, nil))
-	f.state("garage1", "garage1/status", "online") // a node exists, but it has not connected
+	f.registry.offlineAlerts = map[string]alert.OfflineAlert{"garage1": alert.WhenOffline(time.Minute, nil)}
+	p.startOfflineChecks()
 
-	f.advance(9 * time.Minute)
-	f.registry.checkOfflineAlerts()
+	if f.container.receiver == nil {
+		t.Fatal("not listening")
+	}
 
-	if raised, _ := f.raised(); len(raised) != 0 {
-		t.Errorf("raised %+v", raised)
+	<-p.Stop()
+
+	if f.container.receiver != nil || len(f.container.receiversDeregistered) != 1 {
+		t.Errorf("still listening: %v", f.container.receiversDeregistered)
 	}
 }

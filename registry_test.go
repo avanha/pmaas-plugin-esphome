@@ -41,6 +41,10 @@ type fakeContainer struct {
 	broadcasts    []broadcast
 	registerErr   error
 
+	// receiver is the clock event receiver the plugin registered, and receiversDeregistered the handles it gave back.
+	receiver              events.EventReceiver
+	receiversDeregistered []int
+
 	// What Init registers for the status page.
 	routes        map[string]*spi.HttpHandlerOptions
 	jsonRoutes    map[string]spi.JsonHandlerFunc
@@ -87,6 +91,26 @@ func (c *fakeContainer) RegisterEntity(
 func (c *fakeContainer) DeregisterEntity(id string) error {
 	c.deregistered = append(c.deregistered, id)
 	return nil
+}
+
+func (c *fakeContainer) RegisterEventReceiver(_ events.EventPredicate, receiver events.EventReceiver) (int, error) {
+	c.receiver = receiver
+
+	return 7, nil
+}
+
+func (c *fakeContainer) DeregisterEventReceiver(handle int) error {
+	c.receiver = nil
+	c.receiversDeregistered = append(c.receiversDeregistered, handle)
+
+	return nil
+}
+
+func (c *fakeContainer) ClosedCallbackChannel() chan func() {
+	done := make(chan func())
+	close(done)
+
+	return done
 }
 
 func (c *fakeContainer) BroadcastEvent(id string, event any) error {

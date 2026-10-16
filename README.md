@@ -106,8 +106,8 @@ conf.AddDevice(esphome.DeviceConfig{
 The first argument is how long the device has to have been offline (zero is as soon as it is noticed). The second says how
 severe the alert is, and may depend on the time of day (`alert.ByTimeOfDay`); with `nil` it is a warning. The alert clears
 when the device connects again. A device that has never connected counts as offline from when the plugin started. The
-alert is `esphome` / `offline:<device name>`, and is looked at once a minute as well as when the device connects or
-disconnects, so that it comes due without anything happening.
+alert is `esphome` / `offline:<device name>`, and is looked at on the clock's minute event as well as when the device
+connects or disconnects, so that it comes due without anything happening.
 
 ## The status page
 
