@@ -1,7 +1,7 @@
 github.com/avanha/pmaas-common v0.0.4 h1:SzfEeUO21jTB88wW8kebYPa4LrCDDLq6lwBcXtObmOE=
 github.com/avanha/pmaas-common v0.0.4/go.mod h1:XkhgGSpKVnLrNbsuQLcuxzczTeMrf+FDZBhfxA+nJAY=
-github.com/avanha/pmaas-spi v0.0.12 h1:KWLqUx9N5LmeVpckT1JshLuqsy59c7W4gpYjRmrAL/U=
-github.com/avanha/pmaas-spi v0.0.12/go.mod h1:vKV8Ke5QXei42A4agIgxypbznjLqFQyi2hvqSyoe7c0=
+github.com/avanha/pmaas-spi v0.0.13 h1:PmKqD4cUME8wJhIHwfkWmpWpPnwFRa42G++eBVviPbc=
+github.com/avanha/pmaas-spi v0.0.13/go.mod h1:vKV8Ke5QXei42A4agIgxypbznjLqFQyi2hvqSyoe7c0=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/eclipse/paho.mqtt.golang v1.5.1 h1:/VSOv3oDLlpqR2Epjn1Q7b2bSTplJIeV2ISgCl2W7nE=
