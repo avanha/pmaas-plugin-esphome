@@ -37,6 +37,11 @@ type registry struct {
 	// queued, not once it's delivered. The plugin sets it once there's a broker to publish with.
 	publish func(topic string, payload []byte) error
 
+	// control is how each device's switches are guarded, by the device's name, for those that are; failures is the
+	// wrong passwords given for each.
+	control  map[string]SwitchControl
+	failures map[string]*passwordFailures
+
 	// nativeSend sends a message to a device over the native API, and like publish returns once it's queued.
 	nativeSend func(deviceName string, message proto.Message) error
 

@@ -11,6 +11,53 @@ import (
 // defaultNativeAPIPort is the port ESPHome devices serve the native API on.
 const defaultNativeAPIPort = "6053"
 
+// ControlLevel is how carefully a device's switches are guarded against being turned on or off by mistake. A switch
+// on the status page is one press of its icon away from changing, which is what you want for a lamp and not for the
+// plug a server rack is on.
+type ControlLevel int
+
+const (
+	// ControlOpen is the default: a press of the switch's icon sends the command.
+	ControlOpen ControlLevel = iota
+
+	// ControlConfirm has the page ask "Are you sure?" before it sends the command.
+	ControlConfirm
+
+	// ControlPassword has the page ask for a password, which the server checks against SwitchControl.Password
+	// before it sends the command. Several wrong ones in a row lock the device's switches for a short while.
+	ControlPassword
+
+	// ControlReadOnly shows a switch but never changes it: not from the page, and not when another plugin asks.
+	ControlReadOnly
+)
+
+func (l ControlLevel) String() string {
+	switch l {
+	case ControlOpen:
+		return "open"
+	case ControlConfirm:
+		return "confirm"
+	case ControlPassword:
+		return "password"
+	default:
+		return "readonly"
+	}
+}
+
+// SwitchControl is how a device's switches are guarded. Confirming and the password are for a person pressing a
+// switch on the page. They don't apply when another plugin turns a switch on or off, which has nobody to ask, but
+// ControlReadOnly does: nothing can change a read-only switch.
+//
+// The password is checked by the server and is never sent to the page, but it is in the configuration in plain
+// text, and the page sends what's typed over whatever connection it's served on, so serve it over TLS.
+type SwitchControl struct {
+	Level ControlLevel
+
+	// Password is what ControlPassword asks for. A device set to ControlPassword with none is treated as read-only,
+	// rather than as open: a mistake in the configuration mustn't unguard a switch.
+	Password string
+}
+
 // DeviceConfig is one ESPHome device allowed to connect to the plugin's broker.
 type DeviceConfig struct {
 	// Name is the device's ESPHome name. It's the MQTT username the device must connect with
@@ -24,6 +71,9 @@ type DeviceConfig struct {
 	// DisplayName is the name to show for the device. If empty, the name the device announces for
 	// itself is used, falling back to Name.
 	DisplayName string
+
+	// Control is how carefully the device's switches are guarded. The default is ControlOpen.
+	Control SwitchControl
 }
 
 // NativeDeviceConfig is one ESPHome device that PMAAS connects to over the native API, which is what stock
@@ -45,6 +95,9 @@ type NativeDeviceConfig struct {
 
 	// DisplayName is the name to show for the device. If empty, the name the device calls itself is used.
 	DisplayName string
+
+	// Control is how carefully the device's switches are guarded. The default is ControlOpen.
+	Control SwitchControl
 }
 
 // dialAddress is Address with the default port added if it has none.
@@ -178,4 +231,45 @@ func (c PluginConfig) validNativeDevices() (valid []NativeDeviceConfig, problems
 	}
 
 	return valid, problems
+}
+
+// switchControls is how each device's switches are guarded, by the device's name, for the devices that are guarded
+// at all, and what's wrong with any that are guarded in a way that makes no sense. Those are made read-only: a
+// switch that can't be changed is safe, and one that was meant to be guarded and is open is not.
+func (c PluginConfig) switchControls() (controls map[string]SwitchControl, problems []string) {
+	controls = make(map[string]SwitchControl)
+
+	guard := func(name string, control SwitchControl) {
+		switch control.Level {
+		case ControlOpen:
+			return
+		case ControlConfirm, ControlReadOnly:
+		case ControlPassword:
+			if control.Password == "" {
+				problems = append(problems, fmt.Sprintf(
+					"device %q is set to ask for a password but has none, so its switches are read-only", name))
+				control = SwitchControl{Level: ControlReadOnly}
+			}
+		default:
+			problems = append(problems, fmt.Sprintf(
+				"device %q has an unknown control level %d, so its switches are read-only", name, int(control.Level)))
+			control = SwitchControl{Level: ControlReadOnly}
+		}
+
+		controls[name] = control
+	}
+
+	for _, device := range c.Devices {
+		guard(device.Name, device.Control)
+	}
+
+	for _, device := range c.NativeDevices {
+		// A name that's configured twice is only used once, and the first is the one that is (see
+		// validNativeDevices), so its guard is the one that counts.
+		if _, taken := controls[device.Name]; !taken {
+			guard(device.Name, device.Control)
+		}
+	}
+
+	return controls, problems
 }

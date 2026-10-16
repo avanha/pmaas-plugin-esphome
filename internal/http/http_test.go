@@ -238,13 +238,14 @@ type fakeStore struct {
 func (s *fakeStore) GetStatusAndEntities() (common.StatusAndEntities, error) { return s.result, s.err }
 
 type switchCall struct {
-	device string
-	object string
-	on     bool
+	device       string
+	object       string
+	on           bool
+	confirmation common.Confirmation
 }
 
-func (s *fakeStore) SetSwitch(deviceName string, object string, on bool) error {
-	s.switchCalls = append(s.switchCalls, switchCall{deviceName, object, on})
+func (s *fakeStore) SetSwitch(deviceName string, object string, on bool, confirmation common.Confirmation) error {
+	s.switchCalls = append(s.switchCalls, switchCall{deviceName, object, on, confirmation})
 
 	return s.switchErr
 }
@@ -591,7 +592,7 @@ func TestHandleHttpSwitchRequest_PassesTheRequestOn(t *testing.T) {
 		}
 	}
 
-	want := []switchCall{{"plug1", "relay", true}, {"plug1", "relay", false}}
+	want := []switchCall{{"plug1", "relay", true, common.Confirmation{}}, {"plug1", "relay", false, common.Confirmation{}}}
 	if !reflect.DeepEqual(store.switchCalls, want) {
 		t.Fatalf("calls %+v, want %+v", store.switchCalls, want)
 	}
@@ -646,9 +647,76 @@ func TestChildTemplates_AreHeadedByTheShortNameAndTheFullNameIsOnlyATooltip(t *t
 
 		checkContains(t, out, []string{`<div class="name" title="` + full + `">` + short + `</div>`}, nil)
 
-		// The full name is in the tooltip and nowhere else, except where an assistive reader needs it.
-		if strings.Count(out, full) > 2 {
+		// The full name is in the tooltip, and where an assistive reader or the confirmation dialog needs it: not
+		// anywhere that's on show.
+		if strings.Count(out, full) > 3 {
 			t.Errorf("%s: the full name is repeated:\n%s", name, out)
 		}
 	}
+}
+
+func TestHandleHttpSwitchRequest_PassesOnWhatThePersonDidWhenAsked(t *testing.T) {
+	store := &fakeStore{}
+	h := &Handler{entityStore: store}
+
+	_, err := h.handleHttpSwitchRequest(nil, switchRequestFor("POST"),
+		&switchRequest{Device: "rack", Object: "relay", On: false, Confirmed: true, Password: "typed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := switchCall{"rack", "relay", false, common.Confirmation{Confirmed: true, Password: "typed"}}
+	if len(store.switchCalls) != 1 || store.switchCalls[0] != want {
+		t.Fatalf("calls %+v, want %+v", store.switchCalls, want)
+	}
+}
+
+// Why a switch wouldn't change reaches the person, so that "wrong password" can be told from "offline".
+func TestHandleHttpSwitchRequest_TheReasonIsInTheError(t *testing.T) {
+	store := &fakeStore{switchErr: errors.New(`unable to change "Server Rack": wrong password`)}
+	h := &Handler{entityStore: store}
+
+	_, err := h.handleHttpSwitchRequest(nil, switchRequestFor("POST"), &switchRequest{Device: "rack", Object: "relay"})
+	if err == nil || !strings.Contains(err.Error(), "wrong password") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSwitchTemplate_SaysHowTheSwitchIsGuarded(t *testing.T) {
+	for _, c := range []struct {
+		control, icon string
+		disabled      bool
+	}{
+		{"open", "", false},
+		{"confirm", "bi-shield-check", false},
+		{"password", "bi-key-fill", false},
+		{"readonly", "bi-lock-fill", true},
+	} {
+		out := render(t, switchTemplate, &data.SwitchView{
+			Name: "Server Rack", DeviceName: "rack", ObjectID: "relay", DeviceConnected: true, HasData: true,
+			StateClass: "on", State: "On", Control: c.control, CanControl: !c.disabled,
+		})
+
+		checkContains(t, out, []string{`data-control="` + c.control + `"`, `data-name="Server Rack"`}, nil)
+
+		if c.icon == "" {
+			checkContains(t, out, nil, []string{"guard"})
+		} else {
+			checkContains(t, out, []string{c.icon + " guard"}, nil)
+		}
+
+		if strings.Contains(out, " disabled>") != c.disabled {
+			t.Errorf("%s: disabled=%v, want %v:\n%s", c.control, strings.Contains(out, " disabled>"), c.disabled, out)
+		}
+	}
+}
+
+// What the page puts in the confirmation is a name that came from a device.
+func TestSwitchTemplate_TheNameInTheConfirmationIsEscaped(t *testing.T) {
+	out := render(t, switchTemplate, &data.SwitchView{
+		Name: `"><script>alert(1)</script>`, DeviceName: "d", ObjectID: "o", DeviceConnected: true, HasData: true,
+		StateClass: "on", State: "On", Control: "password", CanControl: true,
+	})
+
+	checkContains(t, out, nil, []string{"<script>"})
 }

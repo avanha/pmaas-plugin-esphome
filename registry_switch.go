@@ -98,6 +98,9 @@ func (r *registry) commandSwitch(n *node, ch *switchChannel, state device.Switch
 	name := r.entityName(n.name, ch.disc)
 
 	switch {
+	case r.controlOf(n.name).Level == ControlReadOnly:
+		// Nothing changes a read-only switch, whoever asks: a person at the page or another plugin.
+		return fmt.Errorf("unable to set %q to %s: %w", name, state, errReadOnly)
 	case r.stopped || (!ch.native && r.publish == nil):
 		return fmt.Errorf("unable to set %q to %s: the MQTT broker isn't running", name, state)
 	case !n.connected:

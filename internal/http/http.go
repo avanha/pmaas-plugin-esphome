@@ -233,6 +233,11 @@ type switchRequest struct {
 	Device string
 	Object string
 	On     bool
+
+	// What the person did when asked, for a switch that's guarded: said yes, and typed the password. The server
+	// checks them against how the device's switches are guarded, and ignores what that doesn't call for.
+	Confirmed bool
+	Password  string
 }
 
 type switchResponse struct {
@@ -254,7 +259,7 @@ func (h *Handler) handleHttpSwitchRequest(_ http.ResponseWriter, r *http.Request
 		return nil, errors.New("a device and a switch are required")
 	}
 
-	if err := h.entityStore.SetSwitch(body.Device, body.Object, body.On); err != nil {
+	if err := h.entityStore.SetSwitch(body.Device, body.Object, body.On, common.Confirmation{Confirmed: body.Confirmed, Password: body.Password}); err != nil {
 		return nil, err
 	}
 

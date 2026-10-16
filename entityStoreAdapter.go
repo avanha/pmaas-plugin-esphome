@@ -21,14 +21,14 @@ func (a *entityStoreAdapter) GetStatusAndEntities() (common.StatusAndEntities, e
 
 // SetSwitch implements common.EntityStore, on the plugin's goroutine for the same reason. The error is
 // either that the request couldn't be handed to that goroutine, or what the switch said about it.
-func (a *entityStoreAdapter) SetSwitch(deviceName string, object string, on bool) error {
+func (a *entityStoreAdapter) SetSwitch(deviceName string, object string, on bool, confirmation common.Confirmation) error {
 	state := device.SwitchStateOff
 	if on {
 		state = device.SwitchStateOn
 	}
 
 	commandErr, err := spi.Exec(a.parent.container, func() error {
-		return a.parent.registry.setSwitch(deviceName, object, state)
+		return a.parent.registry.setSwitch(deviceName, object, state, confirmation)
 	})
 	if err != nil {
 		return err

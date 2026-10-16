@@ -1,4 +1,4 @@
-<div class="entity-esphome-switch {{.StateClass | html}}{{if not .DeviceConnected}} offline{{end}}" data-device="{{.DeviceName | html}}" data-object="{{.ObjectID | html}}">
+<div class="entity-esphome-switch {{.StateClass | html}}{{if not .DeviceConnected}} offline{{end}}" data-device="{{.DeviceName | html}}" data-object="{{.ObjectID | html}}" data-name="{{.Name | html}}">
     <div class="title-row">
         <div class="name" title="{{.Name | html}}">{{.ShortName | html}}</div>
         {{if not .DeviceConnected}}
@@ -11,13 +11,20 @@
         <div class="state-row">
             {{/* The icon is the control: pressing it asks for the other state, and it's only a picture when the
                  switch can't be controlled. The state doesn't change until the device reports it. */}}
-            <button type="button" class="switch-toggle {{.StateClass | html}}"
+            <button type="button" class="switch-toggle {{.StateClass | html}}" data-control="{{.Control | html}}"
                     data-on="{{if eq .StateClass "on"}}false{{else}}true{{end}}"
                     title="{{if eq .StateClass "on"}}Turn off{{else}}Turn on{{end}}"
                     aria-label="{{if eq .StateClass "on"}}Turn off{{else}}Turn on{{end}} {{.Name | html}}"{{if not .CanControl}} disabled{{end}}>
                 <i class="bi {{if eq .StateClass "on"}}bi-toggle-on{{else if eq .StateClass "off"}}bi-toggle-off{{else}}bi-question-circle-fill{{end}} switch-icon"></i>
             </button>
             <span class="state {{.StateClass | html}}">{{.State | html}}</span>
+            {{if eq .Control "readonly"}}
+                <i class="bi bi-lock-fill guard" title="Read-only: this switch can't be changed"></i>
+            {{else if eq .Control "password"}}
+                <i class="bi bi-key-fill guard" title="Changing this switch needs a password"></i>
+            {{else if eq .Control "confirm"}}
+                <i class="bi bi-shield-check guard" title="Changing this switch asks for confirmation"></i>
+            {{end}}
         </div>
         <div class="timestamp">
             {{if .LastChangeTime.IsZero}}

@@ -46,6 +46,42 @@ PMAAS publishes commands itself, with no ACL in the way, so it only ever does so
 entity whose announced command topic is outside the device's tree (`<name>/...`) is refused, so one device can't
 make PMAAS command another.
 
+## Guarding a switch
+
+A switch on the page is one press of its icon from changing, which is what you want for a lamp and not for the plug a
+server rack is on. Each device, MQTT or native, can say how carefully its switches are guarded, with `Control`:
+
+```go
+conf.AddNativeDevice(esphome.NativeDeviceConfig{
+	Name: "kauf-plug-7aad7c", Address: "10.47.6.71", DisplayName: "Server Rack",
+	Control: esphome.SwitchControl{Level: esphome.ControlPassword, Password: "a password"},
+})
+```
+
+| Level | What a person at the page has to do | What another plugin has to do |
+|---|---|---|
+| `ControlOpen` (the default) | press the icon | nothing |
+| `ControlConfirm` | press it, and say yes when asked | nothing |
+| `ControlPassword` | press it, and type the password | nothing |
+| `ControlReadOnly` | nothing helps: the switch shows its state and won't change | nothing helps either |
+
+* **Confirm and password are for people.** They apply to the icon on the page, and not when another plugin turns a
+  switch on or off through its `ISwitch`, since an automation has nobody to ask. Read-only is for everyone: nothing
+  can change the switch.
+* **The server decides.** The page asks, but what's allowed is checked on the server from what the request carries, so
+  a request that skips the question is refused the same way. The password is never sent to the page, and is compared
+  in constant time.
+* **Wrong passwords are limited.** Five wrong ones in a row lock all of the device's switches for 30 seconds, during
+  which even the right password is refused; a right one starts the count again. Each wrong one is logged, without
+  what was typed.
+* **A mistake is read-only, never open.** A device set to `ControlPassword` with no password, or with a level that
+  doesn't exist, has its switches made read-only and the plugin says why when it starts.
+* **The password is in the configuration in plain text,** and the page sends what's typed over whatever connection
+  it's served on, so serve the page over TLS if the network isn't entirely yours. The prompt is a dialog of its own,
+  not the browser's, so that what's typed is masked.
+
+A guarded switch shows a lock (read-only), a key (password) or a shield (confirm) beside its state.
+
 ## Power monitors
 
 A device's power, voltage, current and energy sensors become one entity, with a flag for each reading saying

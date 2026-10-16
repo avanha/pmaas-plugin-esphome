@@ -12,12 +12,21 @@ type StatusAndEntities struct {
 	Entities []any
 }
 
+// Confirmation is what a person pressing a switch on the page has done to say they mean it, for the switches that are
+// guarded: Confirmed that they said yes when asked, and Password what they typed when asked for the password. The
+// server checks them against how the device's switches are guarded, and ignores what that doesn't call for.
+type Confirmation struct {
+	Confirmed bool
+	Password  string
+}
+
 // EntityStore is how internal/http reaches back into the plugin for what to show. The plugin implements it
 // by crossing onto its own goroutine, which is where all the state lives.
 type EntityStore interface {
 	GetStatusAndEntities() (StatusAndEntities, error)
 
-	// SetSwitch asks the switch that the device calls object to turn on (true) or off (false). It returns once
-	// the request is queued for the device, not once the device has acted on it.
-	SetSwitch(deviceName string, object string, on bool) error
+	// SetSwitch asks the switch that the device calls object to turn on (true) or off (false), on behalf of a person
+	// at the page, who has to have done what guards the switch. It returns once the request is queued for the
+	// device, not once the device has acted on it.
+	SetSwitch(deviceName string, object string, on bool, confirmation Confirmation) error
 }

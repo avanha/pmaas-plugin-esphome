@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/avanha/pmaas-plugin-esphome/data"
+	"github.com/avanha/pmaas-plugin-esphome/internal/common"
 	"github.com/avanha/pmaas-plugin-esphome/internal/hadiscovery"
 	"github.com/avanha/pmaas-spi/device"
 	"github.com/avanha/pmaas-spi/environment"
@@ -183,7 +184,8 @@ func (r *registry) switchViewsOf(n *node) []data.SwitchView {
 			DeviceName:      n.name,
 			ObjectID:        objectID,
 			DeviceConnected: connected,
-			CanControl:      connected && ch.commandable(),
+			Control:         r.controlOf(n.name).Level.String(),
+			CanControl:      connected && ch.commandable() && r.controlOf(n.name).Level != ControlReadOnly,
 			HasData:         sw.HasData,
 			State:           sw.State.String(),
 			StateClass:      strings.ToLower(sw.State.String()),
@@ -323,8 +325,9 @@ func (r *registry) powerViews() []data.PowerView {
 	return views
 }
 
-// setSwitch asks the switch the device calls objectID to go to state. Runs on the plugin goroutine.
-func (r *registry) setSwitch(deviceName string, objectID string, state device.SwitchState) error {
+// setSwitch asks the switch the device calls objectID to go to state, for a person at the page, who has to have done
+// what guards the switch. Runs on the plugin goroutine.
+func (r *registry) setSwitch(deviceName string, objectID string, state device.SwitchState, confirmation common.Confirmation) error {
 	n, ok := r.nodes[deviceName]
 	if !ok {
 		return fmt.Errorf("there's no device called %q", deviceName)
@@ -333,6 +336,10 @@ func (r *registry) setSwitch(deviceName string, objectID string, state device.Sw
 	ch, ok := n.switches[objectID]
 	if !ok || ch.sw == nil {
 		return fmt.Errorf("%s has no switch called %q", deviceName, objectID)
+	}
+
+	if err := r.authorizeFromPage(deviceName, ch.sw.Data.Name, confirmation); err != nil {
+		return err
 	}
 
 	return ch.sw.SetState(state)

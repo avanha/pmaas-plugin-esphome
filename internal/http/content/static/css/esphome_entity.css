@@ -189,3 +189,52 @@
 .entity-esphome-power .energy {
     opacity: 0.8;
 }
+
+/* What guards the switch: a lock for one that can't be changed, a key for one that wants a password. */
+.entity-esphome-switch .guard {
+    opacity: 0.7;
+}
+
+/* The dialog that asks. */
+dialog.esphome-confirm {
+    border: 1px solid #a19f9c;
+    border-radius: 6px;
+    padding: 16px 18px;
+    max-width: 90vw;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+dialog.esphome-confirm::backdrop {
+    background: rgba(0, 0, 0, 0.4);
+}
+
+dialog.esphome-confirm .message {
+    margin: 0 0 12px 0;
+    font-weight: bold;
+    overflow-wrap: anywhere;
+}
+
+dialog.esphome-confirm .password {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0 0 12px 0;
+    padding: 6px;
+    font-size: 1em;
+}
+
+dialog.esphome-confirm .buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+dialog.esphome-confirm button {
+    padding: 6px 14px;
+    font-size: 1em;
+    cursor: pointer;
+}
+
+dialog.esphome-confirm .confirm {
+    font-weight: bold;
+}

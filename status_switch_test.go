@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/avanha/pmaas-plugin-esphome/data"
+	"github.com/avanha/pmaas-plugin-esphome/internal/common"
 	"github.com/avanha/pmaas-spi/device"
 )
 
@@ -132,11 +133,11 @@ func TestEntityStoreAdapter_SetSwitchRunsOnThePluginGoroutineAndReportsWhatTheSw
 	})
 
 	// The command is accepted for delivery, which is all a request can know, and on means ON.
-	if err := adapter.SetSwitch("plug1", "relay", true); err != nil {
+	if err := adapter.SetSwitch("plug1", "relay", true, common.Confirmation{}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := adapter.SetSwitch("plug1", "relay", false); err != nil {
+	if err := adapter.SetSwitch("plug1", "relay", false, common.Confirmation{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,7 +154,7 @@ func TestEntityStoreAdapter_SetSwitchRunsOnThePluginGoroutineAndReportsWhatTheSw
 		{"nobody", "relay", `there's no device called "nobody"`},
 		{"plug1", "nothing", `plug1 has no switch called "nothing"`},
 	} {
-		if err := adapter.SetSwitch(c.device, c.object, true); err == nil || !strings.Contains(err.Error(), c.wantErr) {
+		if err := adapter.SetSwitch(c.device, c.object, true, common.Confirmation{}); err == nil || !strings.Contains(err.Error(), c.wantErr) {
 			t.Errorf("%s/%s: got %v, want one containing %q", c.device, c.object, err, c.wantErr)
 		}
 	}
@@ -163,7 +164,7 @@ func TestEntityStoreAdapter_SetSwitchRunsOnThePluginGoroutineAndReportsWhatTheSw
 	<-done
 
 	// With the plugin stopped there's nothing to send a command with, and the error says so.
-	if err := adapter.SetSwitch("plug1", "relay", false); err == nil {
+	if err := adapter.SetSwitch("plug1", "relay", false, common.Confirmation{}); err == nil {
 		t.Error("expected an error once the plugin has stopped")
 	}
 }
@@ -174,7 +175,7 @@ func TestRegistry_SetSwitchThroughTheEntityRefusesUnknownState(t *testing.T) {
 	f.registry.HandleConnected("plug1", "10.0.0.5")
 	f.discover("plug1", "switch", "relay", switchConfig("plug1", "relay", "Relay"))
 
-	if err := f.registry.setSwitch("plug1", "relay", device.SwitchStateUnknown); err == nil {
+	if err := f.registry.setSwitch("plug1", "relay", device.SwitchStateUnknown, common.Confirmation{}); err == nil {
 		t.Fatal("expected an error")
 	}
 }

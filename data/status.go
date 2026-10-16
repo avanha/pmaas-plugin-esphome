@@ -169,9 +169,12 @@ type SwitchView struct {
 
 	DeviceConnected bool
 
-	// CanControl is whether the page should offer to turn it on or off: the device is connected, and has said
-	// where to send the command.
+	// CanControl is whether the page should offer to turn it on or off: the device is connected, has said where to
+	// send the command, and its switches aren't read-only. Control is how they're guarded: "open", "confirm",
+	// "password" or "readonly", which is what the page asks of a person before it sends the command. The password
+	// itself never leaves the server.
 	CanControl bool
+	Control    string
 
 	// HasData is whether a state has been reported at all. State is "On", "Off" or "Unknown", and StateClass
 	// the same in lower case, which is also the CSS class that colours it.
