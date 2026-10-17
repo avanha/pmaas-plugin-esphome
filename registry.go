@@ -927,3 +927,12 @@ func (r *registry) broadcast(id string, event any) {
 		r.logf("unable to broadcast %T for %s: %v", event, id, err)
 	}
 }
+
+// deviceDisplayName is what the device is called: what it was configured to be called, or its name.
+func (r *registry) deviceDisplayName(deviceName string) string {
+	if name, ok := r.displayNames[deviceName]; ok {
+		return name
+	}
+
+	return deviceName
+}

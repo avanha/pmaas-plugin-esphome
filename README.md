@@ -109,6 +109,30 @@ when the device connects again. A device that has never connected counts as offl
 alert is `esphome` / `offline:<device name>`, and is looked at on the clock's minute event as well as when the device
 connects or disconnects, so that it comes due without anything happening.
 
+## Bluetooth proxies
+
+A device that runs ESPHome's Bluetooth proxy (`bluetooth_proxy:` with `esp32_ble_tracker:`, on an ESP32) is also a *source of
+Bluetooth advertisements*: the [bluetooth plugin](../pmaas-plugin-bluetooth) recognises Govee and Inkbird sensors from what it
+hears, from this and from any other source (`pmaas-plugin-bluez` for the local radio). Nothing is configured. A device is a
+source if it says it sends raw advertisements, which is all that ESPHome 2025.8 and later send, over the native API. It is
+registered as an entity of its own, "<device> Bluetooth", with the connection's state, what the scanner is doing, and counts of
+what it has heard and forwarded. To keep one that runs the proxy out of it, set `DisableBluetooth: true` on its
+`NativeDeviceConfig`.
+
+* **Nothing is sent to PMAAS until the bluetooth plugin asks.** It broadcasts what it wants (`bluetooth.InterestEvent`);
+  only then does PMAAS subscribe to the proxy, and it unsubscribes when nothing is wanted. It re-subscribes after every
+  reconnection, and the minute event is when a lapsed interest is noticed.
+* **The rest is dropped here.** A proxy hears about twenty advertisements a second, most from phones and neighbours' devices
+  that nobody wants. Each advertisement is decoded (`bluetooth.ParseAdvertisingData`) and checked against what is wanted on the
+  connection's goroutine, and only the wanted ones are broadcast, so the rest never touch the plugin's goroutine. Repeats are
+  dropped for each proxy separately, so two proxies that hear the same sensor both report it.
+* **Scanning mode follows what is wanted.** If anything needs scan responses (names live in them for some devices) the proxy is
+  asked to scan actively, and otherwise passively. It is asked once, and a proxy that doesn't change is left alone. Interval
+  and window are in the proxy's YAML and can't be changed from here: ESPHome's stock proxy package scans a small fraction
+  of the time, and a button that advertises briefly can be missed.
+* **Others using the proxy.** A proxy takes any number of listeners for advertisements, but the scanner's mode is one for all of
+  them, so another client (Home Assistant) that wants a different mode will fight this one.
+
 ## The status page
 
 The **ESPHome** entry in the menu opens a page like the other plugins': a status bar, then a card for each device.

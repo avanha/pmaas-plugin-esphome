@@ -11,7 +11,9 @@ import (
 	"github.com/avanha/pmaas-common/mailbox"
 	"github.com/avanha/pmaas-plugin-esphome/internal/broker"
 	httphandler "github.com/avanha/pmaas-plugin-esphome/internal/http"
+	"github.com/avanha/pmaas-plugin-esphome/internal/nativeapi/pb"
 	spi "github.com/avanha/pmaas-spi"
+	"github.com/avanha/pmaas-spi/bluetooth"
 	"github.com/avanha/pmaas-spi/clock"
 	"github.com/avanha/pmaas-spi/events"
 	"google.golang.org/protobuf/proto"
@@ -48,9 +50,15 @@ type plugin struct {
 	brokerNotUsed bool
 
 	// clockReceiver is the registration to be told each minute, which is what has the devices with an alert for going
-	// offline looked at again.
-	clockReceiver           int
-	clockReceiverRegistered bool
+	// offline looked at again, and the Bluetooth proxies made to do what is wanted of them. interestReceiver is the one for
+	// what the bluetooth plugin wants.
+	clockReceiver              int
+	clockReceiverRegistered    bool
+	interestReceiver           int
+	interestReceiverRegistered bool
+
+	// proxies are the devices that are Bluetooth proxies, which are sources of advertisements.
+	proxies *bluetoothProxies
 }
 
 // Force implementation of spi.IPMAASPlugin
@@ -72,6 +80,7 @@ func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.registry.offlineAlerts = p.config.offlineAlerts()
 	p.registry.publish = p.publishCommand
 	p.registry.nativeSend = p.sendNative
+	p.proxies = newBluetoothProxies(container, p.sendNative, p.registry.deviceDisplayName, p.config.bluetoothDisabled())
 	p.httpHandler.Init(container, &entityStoreAdapter{parent: p})
 }
 
@@ -101,15 +110,26 @@ func (p *plugin) Start() {
 
 	p.startMQTT()
 	p.startNative(nativeDevices)
-	p.startOfflineChecks()
+	p.startOfflineChecks(len(nativeDevices) > 0)
 }
 
 // startOfflineChecks has the alerts for devices going offline looked at each minute, by the clock's event: one that waits for
-// a device to have been offline for a time comes due with nothing happening.
-func (p *plugin) startOfflineChecks() {
+// a device to have been offline for a time comes due with nothing happening. The same minute is when the Bluetooth proxies
+// are made to do what is wanted of them, which notices what is wanted lapsing, so it is also listened for when there are
+// devices that might be proxies. Those, and what the bluetooth plugin wants, are listened for here too.
+func (p *plugin) startOfflineChecks(mayHaveProxies bool) {
 	p.registry.startOfflineWatches()
 
-	if len(p.registry.offlineWatches) == 0 {
+	if mayHaveProxies {
+		handle, err := p.container.RegisterEventReceiver(bluetooth.InterestPredicate, p.proxies.onInterest)
+		if err != nil {
+			fmt.Printf("%T unable to listen for what Bluetooth advertisements are wanted: %v\n", p, err)
+		} else {
+			p.interestReceiver, p.interestReceiverRegistered = handle, true
+		}
+	}
+
+	if len(p.registry.offlineWatches) == 0 && !mayHaveProxies {
 		return
 	}
 
@@ -133,6 +153,7 @@ func isMinuteChanged(eventInfo *events.EventInfo) bool {
 func (p *plugin) onClockEvent(eventInfo *events.EventInfo) error {
 	if _, ok := eventInfo.Event.(clock.MinuteChangedEvent); ok {
 		p.registry.checkOfflineAlerts()
+		p.proxies.reconcile()
 	}
 
 	return nil
@@ -184,6 +205,21 @@ func (p *plugin) nativeCallbacks() nativeCallbacks {
 			p.enqueue(func() { p.registry.HandleConnected(deviceName, address) })
 		},
 		onMessage: func(deviceName string, message proto.Message) {
+			// A Bluetooth proxy sends a lot of these, which are not the registry's business. Decoded and forwarded here, on
+			// the connection's goroutine, they never queue for the plugin's.
+			switch m := message.(type) {
+			case *pb.BluetoothLERawAdvertisementsResponse:
+				p.proxies.advertisements(deviceName, m)
+
+				return
+			case *pb.BluetoothScannerStateResponse:
+				p.enqueue(func() { p.proxies.scannerState(deviceName, m) })
+
+				return
+			case *pb.DeviceInfoResponse:
+				p.enqueue(func() { p.proxies.deviceInfo(deviceName, m) })
+			}
+
 			if p.config.CaptureMessages {
 				fmt.Printf("esphome capture: device=%s native %T %s\n", deviceName, message, truncate([]byte(fmt.Sprint(message)), 2048))
 			}
@@ -191,7 +227,10 @@ func (p *plugin) nativeCallbacks() nativeCallbacks {
 			p.enqueue(func() { p.registry.HandleNativeMessage(deviceName, message) })
 		},
 		onDisconnected: func(deviceName string) {
-			p.enqueue(func() { p.registry.HandleDisconnected(deviceName) })
+			p.enqueue(func() {
+				p.registry.HandleDisconnected(deviceName)
+				p.proxies.disconnected(deviceName)
+			})
 		},
 	}
 }
@@ -336,6 +375,15 @@ func (p *plugin) Stop() chan func() {
 	// Deregister every entity, and from here on ignore anything devices still send. This only touches
 	// state owned by this goroutine and doesn't wait on anything, so it's safe to do right here.
 	p.registry.Shutdown()
+	p.proxies.shutdown()
+
+	if p.interestReceiverRegistered {
+		p.interestReceiverRegistered = false
+
+		if err := p.container.DeregisterEventReceiver(p.interestReceiver); err != nil {
+			fmt.Printf("%T unable to stop listening for what Bluetooth advertisements are wanted: %v\n", p, err)
+		}
+	}
 
 	// Take what's running out of the plugin's state, so that closing it is the job of exactly one place. With
 	// it gone, nothing more is queued: publishCommand and sendNative fail instead.

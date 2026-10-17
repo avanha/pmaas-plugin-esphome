@@ -109,6 +109,10 @@ type NativeDeviceConfig struct {
 	// how severe. The default is no alert. A device that has never connected counts as offline from when the plugin
 	// started.
 	OfflineAlert alert.OfflineAlert
+
+	// DisableBluetooth is that the device is not to be used as a source of Bluetooth advertisements, though it runs
+	// ESPHome's Bluetooth proxy. A device is a source if it says it is one, and the bluetooth plugin asks for what it hears.
+	DisableBluetooth bool
 }
 
 // dialAddress is Address with the default port added if it has none.
@@ -185,6 +189,19 @@ func (c PluginConfig) displayNames() map[string]string {
 	}
 
 	return names
+}
+
+// bluetoothDisabled are the devices that are not to be used as Bluetooth sources, by name.
+func (c PluginConfig) bluetoothDisabled() map[string]bool {
+	disabled := make(map[string]bool)
+
+	for _, device := range c.NativeDevices {
+		if device.DisableBluetooth {
+			disabled[device.Name] = true
+		}
+	}
+
+	return disabled
 }
 
 // offlineAlerts is the alert each device is to have for going offline, by the device's name, for those that are to have one.

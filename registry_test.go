@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/avanha/pmaas-plugin-esphome/internal/hadiscovery"
 	spi "github.com/avanha/pmaas-spi"
+	"github.com/avanha/pmaas-spi/bluetooth"
 	"github.com/avanha/pmaas-spi/device"
 	"github.com/avanha/pmaas-spi/environment"
 	"github.com/avanha/pmaas-spi/events"
@@ -39,11 +41,17 @@ type fakeContainer struct {
 	registrations []registration
 	deregistered  []string
 	broadcasts    []broadcast
+	broadcastMu   sync.Mutex
 	registerErr   error
+	broadcastErr  error
 
 	// receiver is the clock event receiver the plugin registered, and receiversDeregistered the handles it gave back.
 	receiver              events.EventReceiver
 	receiversDeregistered []int
+
+	// interestReceiver is the one for what the bluetooth plugin wants.
+	interestPredicate events.EventPredicate
+	interestReceiver  events.EventReceiver
 
 	// What Init registers for the status page.
 	routes        map[string]*spi.HttpHandlerOptions
@@ -93,14 +101,29 @@ func (c *fakeContainer) DeregisterEntity(id string) error {
 	return nil
 }
 
-func (c *fakeContainer) RegisterEventReceiver(_ events.EventPredicate, receiver events.EventReceiver) (int, error) {
+func (c *fakeContainer) RegisterEventReceiver(predicate events.EventPredicate, receiver events.EventReceiver) (int, error) {
+	c.broadcastMu.Lock()
+	defer c.broadcastMu.Unlock()
+
+	// What the bluetooth plugin wants is kept apart from the clock.
+	if predicate(&events.EventInfo{Event: bluetooth.InterestEvent{}}) {
+		c.interestPredicate, c.interestReceiver = predicate, receiver
+
+		return 8, nil
+	}
+
 	c.receiver = receiver
 
 	return 7, nil
 }
 
 func (c *fakeContainer) DeregisterEventReceiver(handle int) error {
-	c.receiver = nil
+	if handle == 8 {
+		c.interestReceiver = nil
+	} else {
+		c.receiver = nil
+	}
+
 	c.receiversDeregistered = append(c.receiversDeregistered, handle)
 
 	return nil
@@ -114,8 +137,23 @@ func (c *fakeContainer) ClosedCallbackChannel() chan func() {
 }
 
 func (c *fakeContainer) BroadcastEvent(id string, event any) error {
+	c.broadcastMu.Lock()
+	defer c.broadcastMu.Unlock()
+
+	if c.broadcastErr != nil {
+		return c.broadcastErr
+	}
+
 	c.broadcasts = append(c.broadcasts, broadcast{id, event})
 	return nil
+}
+
+// broadcastsSoFar is a copy of the broadcasts, safe to take while other goroutines are still broadcasting.
+func (c *fakeContainer) broadcastsSoFar() []broadcast {
+	c.broadcastMu.Lock()
+	defer c.broadcastMu.Unlock()
+
+	return append([]broadcast(nil), c.broadcasts...)
 }
 
 // EnqueueOnPluginGoRoutine runs f on another goroutine, as the real one does, so stubs can be
