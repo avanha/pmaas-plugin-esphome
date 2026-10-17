@@ -54,6 +54,7 @@ type proxy struct {
 	deviceName string
 	state      *bluetooth.SourceState
 	coalescer  *bluetooth.Coalescer
+	sightings  *bluetooth.SightingTracker
 
 	// entityId is set once, under the lock, before advertisements are forwarded.
 	entityId string
@@ -133,6 +134,7 @@ func (b *bluetoothProxies) add(deviceName string) *proxy {
 		deviceName: deviceName,
 		state:      bluetooth.NewSourceState(name, "esphome-proxy"),
 		coalescer:  bluetooth.NewCoalescerFor(b.interests),
+		sightings:  bluetooth.NewSightingTracker(b.interests),
 	}
 
 	id, err := b.container.RegisterEntity(deviceName+"/bluetooth", bluetooth.ISourceType, name,
@@ -289,7 +291,23 @@ func (b *bluetoothProxies) advertisements(deviceName string, message *pb.Bluetoo
 			Fields:      fields,
 		}
 
-		if verdict, _ := p.coalescer.Admit(&event); verdict != bluetooth.Forward {
+		verdict, _ := p.coalescer.Admit(&event)
+
+		if verdict == bluetooth.NotWanted {
+			// Nobody wants what it said, but somebody may want to know it is around.
+			if sighting, due := p.sightings.Observe(&event); due {
+				if err := bluetooth.PublishSighting(b.container, sighting); err != nil {
+					p.state.Dropped()
+					fmt.Printf("esphome: unable to broadcast a sighting heard by %s: %v\n", deviceName, err)
+				} else {
+					p.state.Sighted()
+				}
+			}
+
+			continue
+		}
+
+		if verdict != bluetooth.Forward {
 			continue
 		}
 

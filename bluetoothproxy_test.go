@@ -820,3 +820,96 @@ func TestPlugin_AProxyOnTheNativeAPIIsASourceThatSendsWhatTheBluetoothPluginAsks
 		}
 	})
 }
+
+func (f *proxyFixture) sightings() []bluetooth.SightingEvent {
+	var result []bluetooth.SightingEvent
+
+	for _, b := range f.container.broadcastsSoFar() {
+		if s, ok := b.event.(bluetooth.SightingEvent); ok {
+			result = append(result, s)
+		}
+	}
+
+	return result
+}
+
+func TestAdvertisements_ADeviceNobodyWantsIsASightingWhenSightingsAreAskedForAndNothingOtherwise(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newProxyFixture(t)
+		f.connect("bt-proxy-1")
+		f.want(goveeRule())
+
+		// A phone with a rotating address, and the Govee that is wanted.
+		f.proxies.advertisements("bt-proxy-1", raw(t, 0x44DCFAB65B00, -70, proxyAppleFrame))
+
+		if len(f.sightings()) != 0 {
+			t.Fatal("a sighting nobody asked for")
+		}
+
+		event := bluetooth.InterestEvent{Owner: "bluetooth", Rules: []bluetooth.Rule{goveeRule()}, Sightings: time.Minute}
+		if err := f.proxies.onInterest(&events.EventInfo{Event: event}); err != nil {
+			t.Fatal(err)
+		}
+
+		f.proxies.advertisements("bt-proxy-1", raw(t, 0x44DCFAB65B00, -71, proxyAppleFrame))
+		f.proxies.advertisements("bt-proxy-1", raw(t, 0x44DCFAB65B00, -72, proxyAppleFrame)) // too soon after
+		f.proxies.advertisements("bt-proxy-1", raw(t, proxyGoveeAddress, -61, proxyGoveeFrame))
+
+		sightings := f.sightings()
+		if len(sightings) != 1 || sightings[0].Address != "44:DC:FA:B6:5B:00" || sightings[0].RSSI != -71 ||
+			sightings[0].Source != f.container.registrations[0].id || !reflect.DeepEqual(sightings[0].ManufacturerIDs, []uint16{0x004c}) {
+			t.Fatalf("sightings %+v", sightings)
+		}
+
+		// The wanted Govee was forwarded as an advertisement, not as a sighting.
+		if adverts := f.adverts(); len(adverts) != 1 || adverts[0].Address != "A4:C1:38:CC:E2:F0" {
+			t.Errorf("advertisements %+v", adverts)
+		}
+
+		if s := f.source("bt-proxy-1"); s.Heard != 4 || s.Forwarded != 1 || s.Sighted != 1 || s.Dropped != 0 {
+			t.Errorf("source %+v", s)
+		}
+
+		// Some time later it is told of again.
+		time.Sleep(time.Minute)
+
+		if err := f.proxies.onInterest(&events.EventInfo{Event: event}); err != nil {
+			t.Fatal(err)
+		}
+
+		f.proxies.advertisements("bt-proxy-1", raw(t, 0x44DCFAB65B00, -73, proxyAppleFrame))
+
+		if got := f.sightings(); len(got) != 2 || got[1].RSSI != -73 {
+			t.Errorf("sightings %+v", got)
+		}
+	})
+}
+
+func TestInterest_SightingsAloneAreReasonToSubscribe(t *testing.T) {
+	f := newProxyFixture(t)
+	f.connect("bt-proxy-1")
+
+	if err := f.proxies.onInterest(&events.EventInfo{Event: bluetooth.InterestEvent{Owner: "bluetooth", Sightings: time.Minute}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := f.sent.to("bt-proxy-1"); len(got) != 1 {
+		t.Errorf("sent %v", got)
+	}
+}
+
+func TestAdvertisements_ASightingThatCouldNotBeBroadcastIsCountedAsDropped(t *testing.T) {
+	f := newProxyFixture(t)
+	f.connect("bt-proxy-1")
+
+	if err := f.proxies.onInterest(&events.EventInfo{Event: bluetooth.InterestEvent{Owner: "bluetooth", Sightings: time.Minute}}); err != nil {
+		t.Fatal(err)
+	}
+
+	f.container.broadcastErr = context.Canceled
+	f.proxies.advertisements("bt-proxy-1", raw(t, 0x44DCFAB65B00, -70, proxyAppleFrame))
+
+	if s := f.source("bt-proxy-1"); s.Heard != 1 || s.Sighted != 0 || s.Dropped != 1 {
+		t.Errorf("source %+v", s)
+	}
+}
