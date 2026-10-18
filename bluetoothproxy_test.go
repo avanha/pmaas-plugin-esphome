@@ -813,6 +813,21 @@ func TestPlugin_AProxyOnTheNativeAPIIsASourceThatSendsWhatTheBluetoothPluginAsks
 		return false
 	})
 
+	// The page shows the proxy as a child of its device, and the status counts it.
+	c.onPluginGoroutine(func() {
+		result := p.getStatusAndEntities()
+		status := result.Status
+
+		if status.BluetoothProxyCount != 1 || len(result.Entities) != 1 {
+			t.Fatalf("status %+v, %d entities", status, len(result.Entities))
+		}
+
+		device := result.Entities[0].(*data.DeviceView)
+		if len(device.Children) != 1 || device.Children[0].Kind() != data.KindBluetoothProxy || !device.OnlyBluetooth {
+			t.Errorf("children %v, only Bluetooth %v", device.Children, device.OnlyBluetooth)
+		}
+	})
+
 	// And when the plugin stops, the source is deregistered, and it stops listening for what is wanted.
 	stopPlugin(t, p, c)
 
@@ -1072,7 +1087,7 @@ func TestAdvertisements_EachMessageIsCountedAsABatch(t *testing.T) {
 	}
 }
 
-func TestAnnotate_AProxysActivityIsShownApartFromItsLastMessage(t *testing.T) {
+func TestAnnotate_AProxyIsAChildOfItsDeviceWithItsActivityAndTheDevicesLastMessageIsLeftAlone(t *testing.T) {
 	f := newProxyFixture(t)
 	f.connect("bt-proxy-1")
 	f.want(goveeRule())
@@ -1080,24 +1095,82 @@ func TestAnnotate_AProxysActivityIsShownApartFromItsLastMessage(t *testing.T) {
 	connectedAt := f.clock
 	f.clock = f.clock.Add(time.Hour)
 	f.proxies.advertisements("bt-proxy-1", raw(t, proxyGoveeAddress, -61, proxyGoveeFrame, proxyAppleFrame))
+	f.clock = f.clock.Add(10 * time.Second)
 
 	view := &data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1", LastMessageTime: connectedAt}}
 	f.proxies.annotate(view)
 
-	// The device's other messages are not made to look recent by a stream of advertisements.
+	// The device's own messages are not made to look recent by a stream of advertisements.
 	if view.LastMessageTime != connectedAt {
 		t.Errorf("last message %v, want it left at %v", view.LastMessageTime, connectedAt)
 	}
 
-	if b := view.Bluetooth; b == nil || b.Batches != 1 || b.Heard != 2 || b.Forwarded != 1 || !b.LastBatchTime.Equal(f.clock) {
-		t.Errorf("%+v", b)
+	if len(view.Children) != 1 || view.EntityCount != 1 || !view.OnlyBluetooth {
+		t.Fatalf("children %v, entities %d, only Bluetooth %v", view.Children, view.EntityCount, view.OnlyBluetooth)
+	}
+
+	child, ok := view.Children[0].(data.BluetoothProxyView)
+	if !ok || child.Kind() != data.KindBluetoothProxy || child.SortKey() != "bt-proxy-1" || child.Name != "Garage Proxy Bluetooth" ||
+		!child.DeviceConnected || child.Batches != 1 || child.Heard != 2 || child.Forwarded != 1 || child.Quiet ||
+		!child.LastBatchTime.Equal(f.clock.Add(-10*time.Second)) {
+		t.Errorf("%+v", child)
+	}
+
+	// A device that has other things tracked is not only a proxy, and the proxy sorts after its switches and sensors.
+	busy := &data.DeviceView{
+		DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1", EntityCount: 2},
+		Children:     []data.Child{data.ThermometerView{Name: "t"}, data.SwitchView{Name: "s"}},
+	}
+	f.proxies.annotate(busy)
+
+	if busy.OnlyBluetooth || busy.EntityCount != 3 || len(busy.Children) != 3 || busy.Children[0].Kind() != data.KindSwitch ||
+		busy.Children[2].Kind() != data.KindBluetoothProxy {
+		t.Errorf("only Bluetooth %v, %d entities, children %v", busy.OnlyBluetooth, busy.EntityCount, busy.Children)
 	}
 
 	// Another device is left as it was.
 	other := &data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "plug", LastMessageTime: connectedAt}}
 	f.proxies.annotate(other)
 
-	if other.Bluetooth != nil || other.LastMessageTime != connectedAt {
+	if len(other.Children) != 0 || other.EntityCount != 0 || other.OnlyBluetooth {
 		t.Errorf("%+v", other)
+	}
+}
+
+func TestAnnotate_AConnectedProxyThatHasSentNothingForTheSilenceLimitIsQuietAndAnOfflineOneIsNot(t *testing.T) {
+	f := newProxyFixture(t)
+	f.connect("bt-proxy-1")
+
+	quiet := func() bool {
+		view := &data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1"}}
+		f.proxies.annotate(view)
+
+		return view.Children[0].(data.BluetoothProxyView).Quiet
+	}
+
+	f.clock = f.clock.Add(silenceLimit - time.Second)
+
+	if quiet() {
+		t.Error("quiet before the limit")
+	}
+
+	f.clock = f.clock.Add(2 * time.Second)
+
+	if !quiet() {
+		t.Error("not quiet after the limit with nothing heard")
+	}
+
+	// A batch ends it, and so does the device going offline.
+	f.proxies.advertisements("bt-proxy-1", raw(t, proxyGoveeAddress, -61, proxyGoveeFrame))
+
+	if quiet() {
+		t.Error("quiet right after a batch")
+	}
+
+	f.clock = f.clock.Add(time.Hour)
+	f.proxies.disconnected("bt-proxy-1")
+
+	if quiet() {
+		t.Error("an offline proxy is called quiet")
 	}
 }

@@ -342,10 +342,11 @@ func TestHandleHttpListRequest_LeavesOutWhatIsNotADevice(t *testing.T) {
 // What there is a renderer for, for every kind of child there is.
 func TestChildKinds_EveryKindHasARendererThatTakesItsOwnViews(t *testing.T) {
 	views := map[string]data.Child{
-		data.KindSwitch:       data.SwitchView{},
-		data.KindPowerMonitor: data.PowerView{},
-		data.KindDoorSensor:   data.DoorSensorView{},
-		data.KindThermometer:  data.ThermometerView{},
+		data.KindSwitch:         data.SwitchView{},
+		data.KindPowerMonitor:   data.PowerView{},
+		data.KindDoorSensor:     data.DoorSensorView{},
+		data.KindThermometer:    data.ThermometerView{},
+		data.KindBluetoothProxy: data.BluetoothProxyView{},
 	}
 
 	for kind, view := range views {
@@ -722,28 +723,58 @@ func TestSwitchTemplate_TheNameInTheConfirmationIsEscaped(t *testing.T) {
 	checkContains(t, out, nil, []string{"<script>"})
 }
 
-func TestDeviceCard_AProxyShowsItsBluetoothActivity(t *testing.T) {
-	out := render(t, deviceTemplate, &deviceWithChildren{
-		DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1", Label: "Proxy", Connected: true, ConnectedSince: time.Now(),
-			LastMessageTime: time.Now().Add(-5 * time.Second),
-			Bluetooth: &data.BluetoothStatus{Scanning: "passive", Batches: 1234, LastBatchTime: time.Now().Add(-5 * time.Second),
-				Heard: 5678, Forwarded: 90, Sighted: 7, Dropped: 2}},
+func TestBluetoothProxyCard_ShowsTheModeAndWhatItHasDone(t *testing.T) {
+	now := time.Now()
+	out := render(t, bluetoothProxyTemplate, data.BluetoothProxyView{
+		Name: "Garage Bluetooth", ShortName: "Bluetooth proxy", DeviceName: "bt-proxy-1", DeviceConnected: true, Scanning: "passive",
+		Batches: 1234, LastBatchTime: now.Add(-5 * time.Second), Heard: 5678, Forwarded: 90, Sighted: 7, Dropped: 2,
 	})
 
-	checkContains(t, out, []string{"Bluetooth", "passive", "Batches", "1234", "Heard", "5678", "Forwarded", "90", "Sighted", "Dropped"}, []string{"Last message"})
+	checkContains(t, out, []string{"Bluetooth proxy", "bi-bluetooth", "passive scan", "Batches", "1234", ", last ", "Heard", "5678", "Forwarded", "90", "Sighted", "Dropped"},
+		[]string{"offline", "quiet-note"})
 
-	// A proxy that is also something else says when that last reported, apart from the Bluetooth line.
-	out = render(t, deviceTemplate, &deviceWithChildren{
-		DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1", Label: "Proxy", Connected: true, EntityCount: 2, LastMessageTime: time.Now().Add(-5 * time.Minute),
-			Bluetooth: &data.BluetoothStatus{Scanning: "passive", Batches: 3, LastBatchTime: time.Now().Add(-2 * time.Second)}},
-	})
-	checkContains(t, out, []string{"Last message", "5m ago", "bluetooth-details", ", last "}, nil)
-	// A device that is not a proxy has none of it, and an idle one doesn't list what is zero.
-	out = render(t, deviceTemplate, &deviceWithChildren{DeviceStatus: data.DeviceStatus{Name: "p", Label: "P", Connected: true}})
-	checkContains(t, out, nil, []string{"Batches", "Forwarded"})
+	// An idle one doesn't list what is zero, and one that has sent nothing has no last batch.
+	out = render(t, bluetoothProxyTemplate, data.BluetoothProxyView{ShortName: "Bluetooth proxy", DeviceConnected: true, Scanning: "off"})
+	checkContains(t, out, []string{"Batches", "Heard", "Forwarded"}, []string{"Sighted", "Dropped", ", last "})
+}
 
-	out = render(t, deviceTemplate, &deviceWithChildren{
-		DeviceStatus: data.DeviceStatus{Name: "b", Label: "B", Connected: true, Bluetooth: &data.BluetoothStatus{Scanning: "off"}},
+func TestBluetoothProxyCard_SaysWhenTheDeviceIsOfflineAndWhenItHasGoneQuiet(t *testing.T) {
+	out := render(t, bluetoothProxyTemplate, data.BluetoothProxyView{
+		ShortName: "Bluetooth proxy", DeviceConnected: false, Scanning: "off", OfflineSince: time.Now().Add(-time.Hour),
 	})
-	checkContains(t, out, []string{"Batches", "Heard"}, []string{"Sighted", "Dropped", ", last"})
+	checkContains(t, out, []string{"entity-esphome-bluetooth offline", "bi-wifi-off", "Device offline since"}, []string{"scan</span>", "quiet-note"})
+
+	out = render(t, bluetoothProxyTemplate, data.BluetoothProxyView{ShortName: "Bluetooth proxy", DeviceConnected: true, Scanning: "passive", Quiet: true})
+	checkContains(t, out, []string{"quiet-note", "stopped hearing"}, []string{"offline"})
+}
+
+func TestDeviceCard_ADeviceThatIsOnlyABluetoothProxyHasNoLastMessageButOneThatIsMoreHasIt(t *testing.T) {
+	view := &data.DeviceView{
+		DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1", Label: "Proxy", Connected: true, ConnectedSince: time.Now(), LastMessageTime: time.Now().Add(-time.Hour), OnlyBluetooth: true},
+		Children:     []data.Child{data.BluetoothProxyView{ShortName: "Bluetooth proxy", DeviceConnected: true, Scanning: "passive", Batches: 3}},
+	}
+
+	if _, known := childKinds[view.Children[0].Kind()]; !known {
+		t.Fatal("the card has no renderer for a Bluetooth proxy")
+	}
+
+	out := render(t, deviceTemplate, &deviceWithChildren{DeviceStatus: view.DeviceStatus})
+	checkContains(t, out, nil, []string{"Last message"})
+
+	// A device that is also something else says when that last reported.
+	other := view.DeviceStatus
+	other.OnlyBluetooth = false
+	out = render(t, deviceTemplate, &deviceWithChildren{DeviceStatus: other})
+	checkContains(t, out, []string{"Last message", "1h 0m ago"}, nil)
+}
+
+func TestStatusTemplate_CountsBluetoothProxies(t *testing.T) {
+	out := render(t, statusTemplate, &data.PluginStatus{BluetoothProxyCount: 1})
+	checkContains(t, out, []string{"1 Bluetooth proxy"}, []string{"proxies"})
+
+	out = render(t, statusTemplate, &data.PluginStatus{BluetoothProxyCount: 2})
+	checkContains(t, out, []string{"2 Bluetooth proxies"}, nil)
+
+	out = render(t, statusTemplate, &data.PluginStatus{})
+	checkContains(t, out, []string{"0 Bluetooth proxies"}, nil)
 }

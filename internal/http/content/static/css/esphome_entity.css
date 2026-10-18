@@ -238,3 +238,49 @@ dialog.esphome-confirm button {
 dialog.esphome-confirm .confirm {
     font-weight: bold;
 }
+
+/* A device's Bluetooth proxy. */
+.entity-esphome-bluetooth {
+    display: flex;
+    flex-flow: column;
+    gap: 3px;
+}
+
+.entity-esphome-bluetooth .title-row {
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.entity-esphome-bluetooth .name {
+    font-weight: bold;
+}
+
+.entity-esphome-bluetooth .offline-icon,
+.entity-esphome-bluetooth .quiet-note {
+    color: #d9534f;
+}
+
+.entity-esphome-bluetooth .scanning {
+    color: grey;
+}
+
+.entity-esphome-bluetooth.offline .activity {
+    opacity: 0.55;
+}
+
+.entity-esphome-bluetooth .activity {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 2px 14px;
+}
+
+.entity-esphome-bluetooth .stat .label {
+    color: grey;
+}
+
+.entity-esphome-bluetooth .stat .label::after {
+    content: ":";
+}

@@ -138,11 +138,13 @@ what it has heard and forwarded. To keep one that runs the proxy out of it, set 
   minutes (a house is never that quiet) is subscribed to again, with a warning in the log; if it is still silent two minutes
   later the connection is ended and made again, with an error in the log. A scanner that reports itself failed is subscribed to
   again at once. Ended connections are logged at warning, with how long they lasted.
-* **Its card shows what it is doing:** the scan mode, how many batches it has sent and when the last came, and how many
-  advertisements it heard, forwarded and dropped since PMAAS started, on a line of their own. The card's "Last message" is
-  about everything else the device sends (its sensors, its switches), so a device that is also a plug shows when the plug last
-  reported, not when a phone was last heard; for a device that is only a proxy it is left out. If the batch count stops rising
-  while the proxy is connected, something is wrong with it, not with PMAAS.
+* **The proxy is a block of its own in the device's card,** like a switch or a thermometer, and is counted in the status bar
+  ("N Bluetooth proxies"): the scan mode, how many batches it has sent and when the last came, and how many advertisements it
+  heard, forwarded and dropped since PMAAS started. It is a card of its own because a device is often more than a proxy (the garage
+  door controller measures and senses too). So the card's "Last message" is about what else the device sends, not about
+  advertisements, and for a device that is only a proxy it is left out. A proxy that is connected but has sent nothing for two
+  minutes is flagged on its block. If the batch count stops rising while the proxy is connected, something is wrong with it, not
+  with PMAAS.
 
 ## The status page
 

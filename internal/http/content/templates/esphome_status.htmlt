@@ -39,7 +39,8 @@
                 {{.ThermometerCount}} thermometer{{if ne .ThermometerCount 1}}s{{end}},
                 {{.DoorSensorCount}} door sensor{{if ne .DoorSensorCount 1}}s{{end}},
                 {{.SwitchCount}} switch{{if ne .SwitchCount 1}}es{{end}},
-                {{.PowerMonitorCount}} power monitor{{if ne .PowerMonitorCount 1}}s{{end}}
+                {{.PowerMonitorCount}} power monitor{{if ne .PowerMonitorCount 1}}s{{end}},
+                {{.BluetoothProxyCount}} Bluetooth prox{{if eq .BluetoothProxyCount 1}}y{{else}}ies{{end}}
             </span>
         </div>
     </div>

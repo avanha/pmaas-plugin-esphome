@@ -235,9 +235,9 @@ func (b *bluetoothProxies) scannerState(deviceName string, state *pb.BluetoothSc
 	b.reconcileOne(p)
 }
 
-// annotate adds what a proxy has done to the device's view. It is kept apart from the device's last message, which is about
-// what else the device has (its sensors, its switches): a device can be a proxy and a plug, and a stream of advertisements would
-// make the plug look as if it had just reported. Runs on the plugin goroutine.
+// annotate adds the Bluetooth proxy a device is to the device's view, as a child of its own, and notes whether it is all the device
+// has that is tracked, so that the time of its last message, which advertisements don't count toward, is not shown for it. Runs on
+// the plugin goroutine.
 func (b *bluetoothProxies) annotate(view *data.DeviceView) {
 	b.mu.Lock()
 	p := b.proxies[view.Name]
@@ -249,15 +249,34 @@ func (b *bluetoothProxies) annotate(view *data.DeviceView) {
 
 	s := p.state.GetSourceData()
 
-	view.Bluetooth = &data.BluetoothStatus{
-		Scanning:      s.Scanning.String(),
-		Batches:       s.Batches,
-		LastBatchTime: s.LastBatch,
-		Heard:         s.Heard,
-		Forwarded:     s.Forwarded,
-		Sighted:       s.Sighted,
-		Dropped:       s.Dropped,
+	child := data.BluetoothProxyView{
+		Name:            s.Name,
+		ShortName:       "Bluetooth proxy",
+		DeviceName:      view.Name,
+		DeviceConnected: s.Connectivity == environment.ConnectivityOnline,
+		Scanning:        s.Scanning.String(),
+		Batches:         s.Batches,
+		LastBatchTime:   s.LastBatch,
+		Heard:           s.Heard,
+		Forwarded:       s.Forwarded,
+		Sighted:         s.Sighted,
+		Dropped:         s.Dropped,
+		OnlineSince:     s.OnlineSince,
+		OfflineSince:    s.OfflineSince,
 	}
+
+	// Counted from the last batch, or from when it connected if it has sent none.
+	reference := s.LastBatch
+	if reference.Before(s.OnlineSince) {
+		reference = s.OnlineSince
+	}
+
+	child.Quiet = child.DeviceConnected && b.now().Sub(reference) > silenceLimit
+
+	view.OnlyBluetooth = view.EntityCount == 0
+	view.EntityCount++
+	view.Children = append(view.Children, child)
+	sortChildren(view.Children)
 }
 
 // reconcile has every connected proxy do what is wanted: listen if anybody wants anything and not otherwise, and scan the way

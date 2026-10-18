@@ -12,10 +12,11 @@ import (
 // someone decides where it belongs; to move one up, raise its number, and to put one below the unlisted, give it a
 // negative one. The numbers are spaced out so that something can be slipped in between.
 var childPriority = map[string]int{
-	data.KindSwitch:       100,
-	data.KindPowerMonitor: 90,
-	data.KindDoorSensor:   50,
-	data.KindThermometer:  40,
+	data.KindSwitch:         100,
+	data.KindPowerMonitor:   90,
+	data.KindDoorSensor:     50,
+	data.KindThermometer:    40,
+	data.KindBluetoothProxy: 30,
 }
 
 // sortChildren puts a device's children in order: by the priority of their kind, highest first, then by the name of

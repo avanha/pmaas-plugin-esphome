@@ -34,6 +34,9 @@ type PluginStatus struct {
 	SwitchCount       int
 	PowerMonitorCount int
 
+	// BluetoothProxyCount is how many of the devices are Bluetooth proxies.
+	BluetoothProxyCount int
+
 	// LastMessageTime is when any device last sent anything. Zero if none has.
 	LastMessageTime time.Time
 }
@@ -41,10 +44,11 @@ type PluginStatus struct {
 // Kinds of child a device has, which is how the page tells them apart, picks the template for each and orders them
 // (see the child priorities in the plugin).
 const (
-	KindSwitch       = "switch"
-	KindPowerMonitor = "power"
-	KindDoorSensor   = "door"
-	KindThermometer  = "thermometer"
+	KindSwitch         = "switch"
+	KindPowerMonitor   = "power"
+	KindDoorSensor     = "door"
+	KindThermometer    = "thermometer"
+	KindBluetoothProxy = "bluetooth"
 )
 
 // Child is something a device has that the page shows inside the device's card: a switch, a power monitor, a door
@@ -108,24 +112,40 @@ type DeviceStatus struct {
 	// time of. Zero if it never has.
 	LastMessageTime time.Time
 
-	// Bluetooth is what the device has done as a Bluetooth proxy, or nil if it is not one.
-	Bluetooth *BluetoothStatus
+	// OnlyBluetooth is that the only thing of the device's that is tracked is its Bluetooth proxy, so that what it last said, apart from
+	// advertisements, is no more than when it connected.
+	OnlyBluetooth bool
 }
 
-// BluetoothStatus is a Bluetooth proxy's activity since PMAAS started.
-type BluetoothStatus struct {
+// BluetoothProxyView is the Bluetooth proxy a device is, as the page shows it: a source of advertisements for the Bluetooth plugin, with
+// what it has done since PMAAS started.
+type BluetoothProxyView struct {
+	// Name is the source's name, as it is registered; ShortName is what the card calls it, the device being on show already.
+	Name       string
+	ShortName  string
+	DeviceName string
+
+	DeviceConnected bool
+
 	// Scanning is "off", "passive" or "active".
 	Scanning string
 
-	// Batches is how many messages of advertisements it has sent and LastBatchTime when the last came. Heard is the
-	// advertisements in them, Forwarded those the Bluetooth plugin wanted, Sighted the devices told of in sightings, and
-	// Dropped those that could not be decoded or broadcast.
+	// Batches is how many messages of advertisements the device has sent and LastBatchTime when the last came. Heard is the
+	// advertisements in them, Forwarded those the Bluetooth plugin wanted, Sighted the devices told of in sightings, and Dropped those
+	// that could not be decoded or broadcast.
 	Batches       uint64
 	LastBatchTime time.Time
 	Heard         uint64
 	Forwarded     uint64
 	Sighted       uint64
 	Dropped       uint64
+
+	// Quiet is that the device is connected and has sent nothing for long enough that it is not a quiet house but a proxy that has
+	// stopped hearing (the plugin is already trying to fix that).
+	Quiet bool
+
+	OfflineSince time.Time
+	OnlineSince  time.Time
 }
 
 // ThermometerView is a thermometer as the page shows it.
@@ -238,14 +258,18 @@ type PowerView struct {
 	OnlineSince  time.Time
 }
 
-func (ThermometerView) Kind() string { return KindThermometer }
-func (DoorSensorView) Kind() string  { return KindDoorSensor }
-func (SwitchView) Kind() string      { return KindSwitch }
-func (PowerView) Kind() string       { return KindPowerMonitor }
+func (ThermometerView) Kind() string    { return KindThermometer }
+func (DoorSensorView) Kind() string     { return KindDoorSensor }
+func (SwitchView) Kind() string         { return KindSwitch }
+func (BluetoothProxyView) Kind() string { return KindBluetoothProxy }
+func (PowerView) Kind() string          { return KindPowerMonitor }
 
 func (v ThermometerView) SortKey() string { return v.Name + "\x00" + v.ObjectID }
 func (v DoorSensorView) SortKey() string  { return v.Name + "\x00" + v.ObjectID }
 func (v SwitchView) SortKey() string      { return v.Name + "\x00" + v.ObjectID }
+
+// SortKey of a BluetoothProxyView is its device, since a device is one proxy.
+func (v BluetoothProxyView) SortKey() string { return v.DeviceName }
 
 // SortKey of a PowerView is its name alone, since a device has one power monitor.
 func (v PowerView) SortKey() string { return v.Name }

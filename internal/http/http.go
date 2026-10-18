@@ -70,6 +70,12 @@ var powerTemplate = spi.TemplateInfo{
 	Paths:   []string{"templates/esphome_power.htmlt"},
 }
 
+var bluetoothProxyTemplate = spi.TemplateInfo{
+	Name:    "esphome_bluetooth",
+	FuncMap: funcMap,
+	Paths:   []string{"templates/esphome_bluetooth.htmlt"},
+}
+
 var doorSensorTemplate = spi.TemplateInfo{
 	Name:    "esphome_door_sensor",
 	FuncMap: funcMap,
@@ -137,6 +143,10 @@ var childKinds = map[string]childKind{
 	}},
 	data.KindDoorSensor: {&doorSensorTemplate, "esphome_door_sensor", func(c data.Child) (any, bool) {
 		v, ok := c.(data.DoorSensorView)
+		return v, ok
+	}},
+	data.KindBluetoothProxy: {&bluetoothProxyTemplate, "esphome_bluetooth", func(c data.Child) (any, bool) {
+		v, ok := c.(data.BluetoothProxyView)
 		return v, ok
 	}},
 	data.KindThermometer: {&thermometerTemplate, "esphome_thermometer", func(c data.Child) (any, bool) {

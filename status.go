@@ -52,6 +52,15 @@ func (p *plugin) getStatusAndEntities() common.StatusAndEntities {
 
 	entities := make([]any, 0, len(devices))
 
+	// Native devices are the only ones that can be Bluetooth proxies, and annotate is what says which are.
+	for _, device := range devices {
+		for _, child := range device.Children {
+			if child.Kind() == data.KindBluetoothProxy {
+				status.BluetoothProxyCount++
+			}
+		}
+	}
+
 	for _, device := range devices {
 		status.DeviceCount++
 
