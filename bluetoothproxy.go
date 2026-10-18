@@ -235,8 +235,9 @@ func (b *bluetoothProxies) scannerState(deviceName string, state *pb.BluetoothSc
 	b.reconcileOne(p)
 }
 
-// annotate adds what a proxy has done to the device's view, and counts its last batch as its last message: a proxy that is
-// hearing things sends no other kind, so the time it connected is not when it last said anything. Runs on the plugin goroutine.
+// annotate adds what a proxy has done to the device's view. It is kept apart from the device's last message, which is about
+// what else the device has (its sensors, its switches): a device can be a proxy and a plug, and a stream of advertisements would
+// make the plug look as if it had just reported. Runs on the plugin goroutine.
 func (b *bluetoothProxies) annotate(view *data.DeviceView) {
 	b.mu.Lock()
 	p := b.proxies[view.Name]
@@ -256,10 +257,6 @@ func (b *bluetoothProxies) annotate(view *data.DeviceView) {
 		Forwarded:     s.Forwarded,
 		Sighted:       s.Sighted,
 		Dropped:       s.Dropped,
-	}
-
-	if s.LastBatch.After(view.LastMessageTime) {
-		view.LastMessageTime = s.LastBatch
 	}
 }
 

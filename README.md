@@ -139,9 +139,10 @@ what it has heard and forwarded. To keep one that runs the proxy out of it, set 
   later the connection is ended and made again, with an error in the log. A scanner that reports itself failed is subscribed to
   again at once. Ended connections are logged at warning, with how long they lasted.
 * **Its card shows what it is doing:** the scan mode, how many batches it has sent and when the last came, and how many
-  advertisements it heard, forwarded and dropped since PMAAS started. The card's "Last message" counts its batches, so it is
-  when the proxy last heard anything. If the batch count stops rising while the proxy is connected, something is wrong with
-  it, not with PMAAS.
+  advertisements it heard, forwarded and dropped since PMAAS started, on a line of their own. The card's "Last message" is
+  about everything else the device sends (its sensors, its switches), so a device that is also a plug shows when the plug last
+  reported, not when a phone was last heard; for a device that is only a proxy it is left out. If the batch count stops rising
+  while the proxy is connected, something is wrong with it, not with PMAAS.
 
 ## The status page
 

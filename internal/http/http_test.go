@@ -730,8 +730,14 @@ func TestDeviceCard_AProxyShowsItsBluetoothActivity(t *testing.T) {
 				Heard: 5678, Forwarded: 90, Sighted: 7, Dropped: 2}},
 	})
 
-	checkContains(t, out, []string{"Bluetooth", "passive", "Batches", "1234", "Heard", "5678", "Forwarded", "90", "Sighted", "Dropped", "Last message"}, nil)
+	checkContains(t, out, []string{"Bluetooth", "passive", "Batches", "1234", "Heard", "5678", "Forwarded", "90", "Sighted", "Dropped"}, []string{"Last message"})
 
+	// A proxy that is also something else says when that last reported, apart from the Bluetooth line.
+	out = render(t, deviceTemplate, &deviceWithChildren{
+		DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1", Label: "Proxy", Connected: true, EntityCount: 2, LastMessageTime: time.Now().Add(-5 * time.Minute),
+			Bluetooth: &data.BluetoothStatus{Scanning: "passive", Batches: 3, LastBatchTime: time.Now().Add(-2 * time.Second)}},
+	})
+	checkContains(t, out, []string{"Last message", "5m ago", "bluetooth-details", ", last "}, nil)
 	// A device that is not a proxy has none of it, and an idle one doesn't list what is zero.
 	out = render(t, deviceTemplate, &deviceWithChildren{DeviceStatus: data.DeviceStatus{Name: "p", Label: "P", Connected: true}})
 	checkContains(t, out, nil, []string{"Batches", "Forwarded"})

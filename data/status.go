@@ -104,8 +104,8 @@ type DeviceStatus struct {
 	// EntityCount is how many entities of this device PMAAS is tracking.
 	EntityCount int
 
-	// LastMessageTime is when the device last sent anything. Zero if it never has. For a Bluetooth proxy that includes its
-	// batches of advertisements, so it is when it last heard anything.
+	// LastMessageTime is when the device last sent anything other than Bluetooth advertisements, which Bluetooth has the
+	// time of. Zero if it never has.
 	LastMessageTime time.Time
 
 	// Bluetooth is what the device has done as a Bluetooth proxy, or nil if it is not one.

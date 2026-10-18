@@ -1072,7 +1072,7 @@ func TestAdvertisements_EachMessageIsCountedAsABatch(t *testing.T) {
 	}
 }
 
-func TestAnnotate_AProxysBatchesAreItsLastMessageAndItsActivityIsShown(t *testing.T) {
+func TestAnnotate_AProxysActivityIsShownApartFromItsLastMessage(t *testing.T) {
 	f := newProxyFixture(t)
 	f.connect("bt-proxy-1")
 	f.want(goveeRule())
@@ -1084,8 +1084,9 @@ func TestAnnotate_AProxysBatchesAreItsLastMessageAndItsActivityIsShown(t *testin
 	view := &data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1", LastMessageTime: connectedAt}}
 	f.proxies.annotate(view)
 
-	if view.LastMessageTime != f.clock {
-		t.Errorf("last message %v, want %v", view.LastMessageTime, f.clock)
+	// The device's other messages are not made to look recent by a stream of advertisements.
+	if view.LastMessageTime != connectedAt {
+		t.Errorf("last message %v, want it left at %v", view.LastMessageTime, connectedAt)
 	}
 
 	if b := view.Bluetooth; b == nil || b.Batches != 1 || b.Heard != 2 || b.Forwarded != 1 || !b.LastBatchTime.Equal(f.clock) {
