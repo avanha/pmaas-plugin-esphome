@@ -2,6 +2,7 @@ package esphome
 
 import (
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
@@ -283,7 +284,7 @@ func (r *registry) logNativeListing(n *node) {
 		line += fmt.Sprintf(", ignoring %d it has no use for (%s)", total, strings.Join(counted, ", "))
 	}
 
-	r.logf("%s", line)
+	r.logf(slog.LevelInfo, "%s", line)
 }
 
 func (r *registry) addIgnored(n *node, kind string) {

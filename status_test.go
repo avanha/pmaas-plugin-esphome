@@ -1,6 +1,7 @@
 package esphome
 
 import (
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -253,7 +254,7 @@ func TestGetStatusAndEntities(t *testing.T) {
 	f := &fixture{t: t, container: p.registry.container.(*fakeContainer), registry: p.registry,
 		clock: time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)}
 	p.registry.now = func() time.Time { return f.clock }
-	p.registry.logf = func(string, ...any) {}
+	p.registry.log = slog.New(slog.DiscardHandler)
 
 	p.brokerProblem = "unable to listen on 127.0.0.1:1883: address already in use"
 

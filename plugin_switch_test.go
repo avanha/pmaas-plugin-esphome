@@ -1,6 +1,7 @@
 package esphome
 
 import (
+	"log/slog"
 	"net"
 	"testing"
 	"time"
@@ -181,7 +182,7 @@ func TestPlugin_ASwitchIsCommandedThroughTheBrokerAndTheDeviceReportsTheResult(t
 }
 
 func TestPlugin_PublishCommandFailsWithoutABroker(t *testing.T) {
-	p := &plugin{}
+	p := &plugin{log: slog.New(slog.DiscardHandler)}
 
 	if err := p.publishCommand("plug1/switch/relay/command", []byte("ON")); err != errBrokerNotRunning {
 		t.Fatalf("got %v", err)

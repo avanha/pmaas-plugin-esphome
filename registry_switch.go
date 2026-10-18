@@ -3,6 +3,7 @@ package esphome
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/avanha/pmaas-plugin-esphome/internal/entities"
@@ -66,7 +67,7 @@ func (r *registry) registerSwitch(n *node, ch *switchChannel) {
 		sw.Data.Name,
 		func() (any, error) { return sw.GetStub(r.container), nil })
 	if err != nil {
-		r.logf("%s: unable to register switch %q: %v", n.name, ch.disc.ObjectID, err)
+		r.logf(slog.LevelError, "%s: unable to register switch %q: %v", n.name, ch.disc.ObjectID, err)
 		return
 	}
 
@@ -88,7 +89,7 @@ func (r *registry) deregisterSwitch(n *node, ch *switchChannel) {
 	}
 
 	if err := r.container.DeregisterEntity(ch.sw.PmaasEntityId); err != nil {
-		r.logf("unable to deregister switch %s: %v", ch.sw.PmaasEntityId, err)
+		r.logf(slog.LevelError, "unable to deregister switch %s: %v", ch.sw.PmaasEntityId, err)
 	}
 
 	ch.sw.CloseStubIfPresent()
@@ -152,7 +153,7 @@ func (r *registry) handleSwitchState(n *node, ch *switchChannel, payload []byte)
 	case ch.disc.StatePayloadOff:
 		r.applySwitchState(n, ch, device.SwitchStateOff)
 	default:
-		r.logf("%s: unrecognized switch state %q on %s", n.name, payload, ch.disc.StateTopic)
+		r.logf(slog.LevelWarn, "%s: unrecognized switch state %q on %s", n.name, payload, ch.disc.StateTopic)
 	}
 }
 

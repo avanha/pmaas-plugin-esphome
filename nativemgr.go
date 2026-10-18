@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -46,7 +47,7 @@ type nativeManager struct {
 	devices   []NativeDeviceConfig
 	dial      nativeDialFunc
 	callbacks nativeCallbacks
-	logf      func(format string, args ...any)
+	log       *slog.Logger
 
 	// How long to wait before trying a device again after a connection fails or ends: from minBackoff, doubling up
 	// to maxBackoff. A failure that trying again sooner can't fix (the wrong key, the wrong device) waits
@@ -68,14 +69,14 @@ type nativeManager struct {
 	problems map[string]string
 }
 
-func newNativeManager(devices []NativeDeviceConfig, callbacks nativeCallbacks, logf func(string, ...any)) *nativeManager {
+func newNativeManager(devices []NativeDeviceConfig, callbacks nativeCallbacks, log *slog.Logger) *nativeManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &nativeManager{
 		devices:     devices,
 		dial:        dialNative,
 		callbacks:   callbacks,
-		logf:        logf,
+		log:         log,
 		minBackoff:  time.Second,
 		maxBackoff:  time.Minute,
 		stableAfter: 30 * time.Second,
@@ -145,7 +146,7 @@ func (m *nativeManager) run(device NativeDeviceConfig) {
 
 	cfg := nativeapi.Config{
 		Address: address, Key: device.Key, Name: device.Name, ClientInfo: "PMAAS",
-		Logf: func(format string, args ...any) { m.logf("%s: "+format, append([]any{device.Name}, args...)...) },
+		Logf: func(format string, args ...any) { m.log.Debug(fmt.Sprintf(format, args...), "device", device.Name) },
 	}
 
 	for m.ctx.Err() == nil {
@@ -157,7 +158,7 @@ func (m *nativeManager) run(device NativeDeviceConfig) {
 
 			problem := describeNativeError(err)
 			m.setConn(device.Name, nil, problem)
-			m.logf("%s: unable to connect to %s: %s", device.Name, address, problem)
+			m.logf(slog.LevelError, "%s: unable to connect to %s: %s", device.Name, address, problem)
 
 			if !m.wait(m.delayAfterFailure(err, &backoff)) {
 				return
@@ -195,7 +196,7 @@ func (m *nativeManager) run(device NativeDeviceConfig) {
 		}
 
 		reason := conn.Err()
-		m.logf("%s: connection to %s ended: %v", device.Name, address, reason)
+		m.logf(slog.LevelDebug, "%s: connection to %s ended: %v", device.Name, address, reason)
 
 		if time.Since(started) >= m.stableAfter {
 			backoff = m.minBackoff
@@ -272,4 +273,9 @@ func describeNativeError(err error) string {
 	default:
 		return err.Error()
 	}
+}
+
+// logf logs a message at the level, worded as it is for a person reading the log; the device it is about is in it.
+func (m *nativeManager) logf(level slog.Level, format string, args ...any) {
+	m.log.Log(context.Background(), level, fmt.Sprintf(format, args...))
 }

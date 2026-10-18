@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/avanha/pmaas-spi/logging"
 	"log/slog"
 	"net"
-	"os"
 
 	"github.com/avanha/pmaas-common/mailbox"
 	"github.com/avanha/pmaas-plugin-esphome/internal/broker"
@@ -29,6 +29,7 @@ type Plugin interface {
 }
 
 type plugin struct {
+	log       *slog.Logger
 	config    PluginConfig
 	container spi.IPMAASContainer
 	registry  *registry
@@ -74,6 +75,7 @@ func (p *plugin) ShortName() string {
 
 func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.container = container
+	p.log = logging.For(container)
 	p.registry = newRegistry(container, p.config.DiscoveryPrefix, p.config.displayNames())
 	p.registry.control, _ = p.config.switchControls() // what's wrong with it is reported when the plugin starts
 	p.registry.handles = p.config.handles
@@ -85,23 +87,23 @@ func (p *plugin) Init(container spi.IPMAASContainer) {
 }
 
 func (p *plugin) Start() {
-	fmt.Printf("%T Starting...\n", p)
+	p.log.Info("starting")
 
 	p.listenAddress = p.config.ListenAddress
 
 	nativeDevices, problems := p.config.validNativeDevices()
 	for _, problem := range problems {
-		fmt.Printf("%T ERROR: %s\n", p, problem)
+		p.log.Error("invalid configuration", "problem", problem)
 	}
 
 	_, controlProblems := p.config.switchControls()
 	for _, problem := range controlProblems {
-		fmt.Printf("%T ERROR: %s\n", p, problem)
+		p.log.Error("invalid configuration", "problem", problem)
 	}
 
 	if len(p.config.Devices) == 0 && len(nativeDevices) == 0 {
 		p.brokerProblem = "no devices are configured"
-		fmt.Printf("%T WARNING: no devices configured, not starting the MQTT broker\n", p)
+		p.log.Warn("no devices configured, not starting the MQTT broker")
 
 		return
 	}
@@ -123,7 +125,7 @@ func (p *plugin) startOfflineChecks(mayHaveProxies bool) {
 	if mayHaveProxies {
 		handle, err := p.container.RegisterEventReceiver(bluetooth.InterestPredicate, p.proxies.onInterest)
 		if err != nil {
-			fmt.Printf("%T unable to listen for what Bluetooth advertisements are wanted: %v\n", p, err)
+			p.log.Error("unable to listen for what Bluetooth advertisements are wanted", "error", err)
 		} else {
 			p.interestReceiver, p.interestReceiverRegistered = handle, true
 		}
@@ -135,7 +137,7 @@ func (p *plugin) startOfflineChecks(mayHaveProxies bool) {
 
 	handle, err := p.container.RegisterEventReceiver(isMinuteChanged, p.onClockEvent)
 	if err != nil {
-		fmt.Printf("%T unable to register for clock events, so offline alerts will only follow connections: %v\n", p, err)
+		p.log.Error("unable to register for clock events, so offline alerts will only follow connections", "error", err)
 
 		return
 	}
@@ -169,7 +171,7 @@ func (p *plugin) startMQTT() {
 	mqttBroker, address, err := p.startBroker()
 	if err != nil {
 		p.brokerProblem = err.Error()
-		fmt.Printf("%T ERROR: not starting the MQTT broker: %v\n", p, err)
+		p.log.Error("not starting the MQTT broker", "error", err)
 
 		return
 	}
@@ -177,7 +179,7 @@ func (p *plugin) startMQTT() {
 	p.broker = mqttBroker
 	p.listenAddress = address.String()
 
-	fmt.Printf("%T MQTT broker listening on %s for %d device(s)\n", p, address, len(p.config.Devices))
+	p.log.Info("MQTT broker listening", "address", address, "devices", len(p.config.Devices))
 }
 
 // startNative connects to the devices reached over the native API.
@@ -186,7 +188,7 @@ func (p *plugin) startNative(devices []NativeDeviceConfig) {
 		return
 	}
 
-	p.native = newNativeManager(devices, p.nativeCallbacks(), p.registry.logf)
+	p.native = newNativeManager(devices, p.nativeCallbacks(), logging.For(p.container, "native"))
 
 	if p.nativeDial != nil {
 		p.native.dial = p.nativeDial
@@ -194,7 +196,7 @@ func (p *plugin) startNative(devices []NativeDeviceConfig) {
 
 	p.native.Start()
 
-	fmt.Printf("%T connecting to %d device(s) over the native API\n", p, len(devices))
+	p.log.Info("connecting to devices over the native API", "devices", len(devices))
 }
 
 // nativeCallbacks hands everything the native API connections report over to the plugin goroutine, the same way
@@ -221,7 +223,7 @@ func (p *plugin) nativeCallbacks() nativeCallbacks {
 			}
 
 			if p.config.CaptureMessages {
-				fmt.Printf("esphome capture: device=%s native %T %s\n", deviceName, message, truncate([]byte(fmt.Sprint(message)), 2048))
+				p.log.Debug("native message", "device", deviceName, "type", fmt.Sprintf("%T", message), "message", truncate([]byte(fmt.Sprint(message)), 2048))
 			}
 
 			p.enqueue(func() { p.registry.HandleNativeMessage(deviceName, message) })
@@ -249,7 +251,7 @@ func (p *plugin) sendNative(deviceName string, message proto.Message) error {
 
 	return p.outbox.Post(func() {
 		if err := conn.Send(message); err != nil {
-			fmt.Printf("esphome: unable to send a command to %s: %v\n", deviceName, err)
+			p.log.Error("unable to send a command", "device", deviceName, "error", err)
 		}
 	})
 }
@@ -273,7 +275,7 @@ func (p *plugin) startBroker() (*broker.Broker, net.Addr, error) {
 		Listener:        listener,
 		Devices:         credentials,
 		DiscoveryPrefix: p.config.DiscoveryPrefix,
-		Logger:          brokerLogger(),
+		Logger:          brokerLogger(logging.For(p.container, "broker")),
 	}, p.brokerCallbacks())
 	if err != nil {
 		_ = listener.Close()
@@ -295,7 +297,7 @@ func (p *plugin) publishCommand(topic string, payload []byte) error {
 
 	return p.outbox.Post(func() {
 		if err := mqttBroker.Publish(topic, payload, false); err != nil {
-			fmt.Printf("esphome: unable to publish a command to %s: %v\n", topic, err)
+			p.log.Error("unable to publish a command", "topic", topic, "error", err)
 		}
 	})
 }
@@ -304,10 +306,8 @@ func (p *plugin) publishCommand(topic string, payload []byte) error {
 // a topic it may not. Those are the things an operator needs to see, since a device that's refused just
 // keeps reconnecting and says nothing useful. Warnings and errors only, since the broker's own debug and
 // info output is noisy.
-func brokerLogger() *slog.Logger {
-	return slog.New(dropUnnamedBrokerWarnings{slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelWarn,
-	})})
+func brokerLogger(log *slog.Logger) *slog.Logger {
+	return slog.New(dropUnnamedBrokerWarnings{log.Handler()})
 }
 
 // dropUnnamedBrokerWarnings discards the broker's one warning that has no message. It logs, with an empty
@@ -343,8 +343,7 @@ func (p *plugin) brokerCallbacks() broker.Callbacks {
 	return broker.Callbacks{
 		OnMessage: func(device string, topic string, payload []byte, retain bool) {
 			if p.config.CaptureMessages {
-				fmt.Printf("esphome capture: device=%s retain=%v topic=%s payload=%s\n",
-					device, retain, topic, truncate(payload, 2048))
+				p.log.Debug("mqtt message", "device", device, "retain", retain, "topic", topic, "payload", truncate(payload, 2048))
 			}
 
 			p.enqueue(func() { p.registry.HandleMessage(device, topic, payload) })
@@ -361,7 +360,7 @@ func (p *plugin) brokerCallbacks() broker.Callbacks {
 func (p *plugin) enqueue(f func()) {
 	if err := p.container.EnqueueOnPluginGoRoutine(f); err != nil {
 		// The plugin is stopping; there's nothing left to tell.
-		fmt.Printf("%T dropping broker event: %v\n", p, err)
+		p.log.Warn("dropping broker event", "error", err)
 	}
 }
 
@@ -370,7 +369,7 @@ func (p *plugin) enqueue(f func()) {
 // Entities are deregistered here, and the broker is closed on a background goroutine; the returned
 // channel closes when that's done, and the plugin goroutine is free in the meantime.
 func (p *plugin) Stop() chan func() {
-	fmt.Printf("%T Stopping...\n", p)
+	p.log.Info("stopping")
 
 	// Deregister every entity, and from here on ignore anything devices still send. This only touches
 	// state owned by this goroutine and doesn't wait on anything, so it's safe to do right here.
@@ -381,7 +380,7 @@ func (p *plugin) Stop() chan func() {
 		p.interestReceiverRegistered = false
 
 		if err := p.container.DeregisterEventReceiver(p.interestReceiver); err != nil {
-			fmt.Printf("%T unable to stop listening for what Bluetooth advertisements are wanted: %v\n", p, err)
+			p.log.Error("unable to stop listening for what Bluetooth advertisements are wanted", "error", err)
 		}
 	}
 
@@ -398,7 +397,7 @@ func (p *plugin) Stop() chan func() {
 		p.clockReceiverRegistered = false
 
 		if err := p.container.DeregisterEventReceiver(p.clockReceiver); err != nil {
-			fmt.Printf("%T unable to deregister the clock event receiver: %v\n", p, err)
+			p.log.Error("unable to deregister the clock event receiver", "error", err)
 		}
 	}
 
@@ -427,7 +426,7 @@ func (p *plugin) Stop() chan func() {
 
 		if broker != nil {
 			if err := broker.Close(); err != nil {
-				fmt.Printf("%T error closing the MQTT broker: %v\n", p, err)
+				p.log.Error("error closing the MQTT broker", "error", err)
 			}
 		}
 	}()

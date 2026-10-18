@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -295,7 +296,7 @@ func TestHandleHttpListRequest_RendersTheStatusAboveTheDeviceCards(t *testing.T)
 	}
 
 	container := &listContainer{}
-	h := &Handler{container: container, entityStore: &fakeStore{result: common.StatusAndEntities{Status: status, Entities: entities}}}
+	h := &Handler{log: slog.New(slog.DiscardHandler), container: container, entityStore: &fakeStore{result: common.StatusAndEntities{Status: status, Entities: entities}}}
 
 	h.handleHttpListRequest(httptest.NewRecorder(), httptest.NewRequest("GET", "/plugins/esphome/", nil))
 
@@ -327,7 +328,7 @@ func TestHandleHttpListRequest_RendersTheStatusAboveTheDeviceCards(t *testing.T)
 // Something that isn't a device in the list is reported and left out, not rendered as something it isn't.
 func TestHandleHttpListRequest_LeavesOutWhatIsNotADevice(t *testing.T) {
 	container := &listContainer{}
-	h := &Handler{container: container, entityStore: &fakeStore{result: common.StatusAndEntities{
+	h := &Handler{log: slog.New(slog.DiscardHandler), container: container, entityStore: &fakeStore{result: common.StatusAndEntities{
 		Entities: []any{"not a device", &data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "plug1"}}},
 	}}}
 
@@ -380,7 +381,7 @@ func TestChildKinds_EveryKindHasARendererThatTakesItsOwnViews(t *testing.T) {
 // The device card with its children, rendered by the real templates the way the page does it.
 func TestDeviceCard_RendersItsChildrenInsideItself(t *testing.T) {
 	container := &listContainer{}
-	h := &Handler{container: container}
+	h := &Handler{log: slog.New(slog.DiscardHandler), container: container}
 
 	device := h.newDeviceWithChildren(&data.DeviceView{
 		DeviceStatus: data.DeviceStatus{
@@ -446,7 +447,7 @@ func TestDeviceCard_ADisconnectedDeviceSaysSince(t *testing.T) {
 
 func TestHandleHttpListRequest_StillRendersAPageWhenTheStatusCannotBeRetrieved(t *testing.T) {
 	container := &listContainer{}
-	h := &Handler{container: container, entityStore: &fakeStore{err: errors.New("the plugin is stopping")}}
+	h := &Handler{log: slog.New(slog.DiscardHandler), container: container, entityStore: &fakeStore{err: errors.New("the plugin is stopping")}}
 
 	h.handleHttpListRequest(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
 
@@ -579,7 +580,7 @@ func switchRequestFor(method string) *http.Request {
 
 func TestHandleHttpSwitchRequest_PassesTheRequestOn(t *testing.T) {
 	store := &fakeStore{}
-	h := &Handler{entityStore: store}
+	h := &Handler{log: slog.New(slog.DiscardHandler), entityStore: store}
 
 	for _, on := range []bool{true, false} {
 		response, err := h.handleHttpSwitchRequest(nil, switchRequestFor("POST"), &switchRequest{Device: "plug1", Object: "relay", On: on})
@@ -611,7 +612,7 @@ func TestHandleHttpSwitchRequest_RefusesWhatItShouldNot(t *testing.T) {
 		{"nothing", "POST", nil},
 	} {
 		store := &fakeStore{}
-		h := &Handler{entityStore: store}
+		h := &Handler{log: slog.New(slog.DiscardHandler), entityStore: store}
 
 		if _, err := h.handleHttpSwitchRequest(nil, switchRequestFor(c.method), c.request); err == nil {
 			t.Errorf("%s: expected an error", c.name)
@@ -625,7 +626,7 @@ func TestHandleHttpSwitchRequest_RefusesWhatItShouldNot(t *testing.T) {
 
 func TestHandleHttpSwitchRequest_ReportsWhyItCouldNotBeSent(t *testing.T) {
 	store := &fakeStore{switchErr: errors.New("the device is offline")}
-	h := &Handler{entityStore: store}
+	h := &Handler{log: slog.New(slog.DiscardHandler), entityStore: store}
 
 	_, err := h.handleHttpSwitchRequest(nil, switchRequestFor("POST"), &switchRequest{Device: "plug1", Object: "relay", On: true})
 	if err == nil || !strings.Contains(err.Error(), "the device is offline") {
@@ -657,7 +658,7 @@ func TestChildTemplates_AreHeadedByTheShortNameAndTheFullNameIsOnlyATooltip(t *t
 
 func TestHandleHttpSwitchRequest_PassesOnWhatThePersonDidWhenAsked(t *testing.T) {
 	store := &fakeStore{}
-	h := &Handler{entityStore: store}
+	h := &Handler{log: slog.New(slog.DiscardHandler), entityStore: store}
 
 	_, err := h.handleHttpSwitchRequest(nil, switchRequestFor("POST"),
 		&switchRequest{Device: "rack", Object: "relay", On: false, Confirmed: true, Password: "typed"})
@@ -674,7 +675,7 @@ func TestHandleHttpSwitchRequest_PassesOnWhatThePersonDidWhenAsked(t *testing.T)
 // Why a switch wouldn't change reaches the person, so that "wrong password" can be told from "offline".
 func TestHandleHttpSwitchRequest_TheReasonIsInTheError(t *testing.T) {
 	store := &fakeStore{switchErr: errors.New(`unable to change "Server Rack": wrong password`)}
-	h := &Handler{entityStore: store}
+	h := &Handler{log: slog.New(slog.DiscardHandler), entityStore: store}
 
 	_, err := h.handleHttpSwitchRequest(nil, switchRequestFor("POST"), &switchRequest{Device: "rack", Object: "relay"})
 	if err == nil || !strings.Contains(err.Error(), "wrong password") {

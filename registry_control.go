@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/avanha/pmaas-plugin-esphome/internal/common"
@@ -87,12 +88,12 @@ func (r *registry) checkPassword(deviceName string, switchName string, want stri
 	failures.count++
 
 	// What was typed isn't logged, here or anywhere.
-	r.logf("%s: wrong password for %q from the page (%d of %d)", deviceName, switchName, failures.count, maxPasswordFailures)
+	r.logf(slog.LevelWarn, "%s: wrong password for %q from the page (%d of %d)", deviceName, switchName, failures.count, maxPasswordFailures)
 
 	if failures.count >= maxPasswordFailures {
 		failures.count = 0
 		failures.lockedUntil = now.Add(passwordLockout)
-		r.logf("%s: too many wrong passwords, its switches are locked for %s", deviceName, passwordLockout)
+		r.logf(slog.LevelWarn, "%s: too many wrong passwords, its switches are locked for %s", deviceName, passwordLockout)
 	}
 
 	return fmt.Errorf("unable to change %q: %w", switchName, errWrongPassword)

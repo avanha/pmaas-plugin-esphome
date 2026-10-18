@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"reflect"
 	"sync"
 	"testing"
@@ -428,7 +429,7 @@ func TestScannerMode_IsLeftAloneWhenNothingIsWantedAndAskedForAgainAfterAReconne
 func TestOnClockEvent_MakesTheProxiesDoWhatIsWantedSoALapsedInterestIsNoticed(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := newProxyFixture(t)
-		p := &plugin{container: f.container, registry: newRegistry(f.container, "homeassistant", nil), proxies: f.proxies}
+		p := &plugin{log: slog.New(slog.DiscardHandler), container: f.container, registry: newRegistry(f.container, "homeassistant", nil), proxies: f.proxies}
 
 		f.connect("bt-proxy-1")
 		f.want(goveeRule())

@@ -3,6 +3,7 @@ package esphome
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"sync"
 	"testing"
@@ -27,7 +28,7 @@ func startNativePlugin(t *testing.T, config PluginConfig, dial nativeDialFunc) (
 	p := NewPlugin(config).(*plugin)
 	p.nativeDial = dial
 	p.Init(c)
-	p.registry.logf = func(string, ...any) {}
+	p.registry.log = slog.New(slog.DiscardHandler)
 
 	c.onPluginGoroutine(p.Start)
 
@@ -330,7 +331,7 @@ func TestPlugin_NativeAndMQTTDevicesRunTogether(t *testing.T) {
 }
 
 func TestPlugin_SendNativeFailsWhenThereIsNothingToSendTo(t *testing.T) {
-	p := &plugin{}
+	p := &plugin{log: slog.New(slog.DiscardHandler)}
 
 	if err := p.sendNative("plug1", &pb.PingRequest{}); !errors.Is(err, errNativeNotRunning) {
 		t.Fatalf("got %v", err)
@@ -367,7 +368,7 @@ func TestPlugin_SendNativeOnAnMQTTOnlyPluginFailsRatherThanPanicking(t *testing.
 	outbox := mailbox.NewOutbox()
 	defer outbox.Stop()
 
-	p := &plugin{outbox: outbox}
+	p := &plugin{log: slog.New(slog.DiscardHandler), outbox: outbox}
 
 	if err := p.sendNative("plug1", &pb.PingRequest{}); !errors.Is(err, errNativeNotRunning) {
 		t.Fatalf("got %v", err)

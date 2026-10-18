@@ -1,7 +1,8 @@
 package esphome
 
 import (
-	"fmt"
+	"github.com/avanha/pmaas-spi/logging"
+	"log/slog"
 	"slices"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ const subscribeRaw = 1
 // bluetoothProxies are the Bluetooth proxies among the devices. Methods say which goroutine they run on: the plugin's, or
 // the connection's read loop, which has to be quick (a slow handler makes the device look dead).
 type bluetoothProxies struct {
+	log       *slog.Logger
 	container spi.IPMAASContainer
 	interests *bluetooth.Interests
 
@@ -70,6 +72,7 @@ type proxy struct {
 
 func newBluetoothProxies(container spi.IPMAASContainer, send func(string, proto.Message) error, displayName func(string) string, disabled map[string]bool) *bluetoothProxies {
 	return &bluetoothProxies{
+		log:         logging.For(container, "bluetooth"),
 		container:   container,
 		interests:   bluetooth.NewInterests(),
 		send:        send,
@@ -93,7 +96,7 @@ func (b *bluetoothProxies) onInterest(eventInfo *events.EventInfo) error {
 	}
 
 	if err := b.interests.Set(event); err != nil {
-		fmt.Printf("esphome: ignoring an interest from %q: %v\n", event.Owner, err)
+		b.log.Warn("ignoring an interest", "owner", event.Owner, "error", err)
 
 		return nil
 	}
@@ -140,7 +143,7 @@ func (b *bluetoothProxies) add(deviceName string) *proxy {
 	id, err := b.container.RegisterEntity(deviceName+"/bluetooth", bluetooth.ISourceType, name,
 		func() (any, error) { return p.state, nil })
 	if err != nil {
-		fmt.Printf("esphome: unable to register %s as a Bluetooth source: %v\n", deviceName, err)
+		b.log.Error("unable to register as a Bluetooth source", "device", deviceName, "error", err)
 
 		return nil
 	}
@@ -151,7 +154,7 @@ func (b *bluetoothProxies) add(deviceName string) *proxy {
 	b.proxies[deviceName] = p
 	b.mu.Unlock()
 
-	fmt.Printf("esphome: %s is a Bluetooth proxy\n", deviceName)
+	b.log.Debug("device is a Bluetooth proxy", "device", deviceName)
 
 	return p
 }
@@ -221,7 +224,7 @@ func (b *bluetoothProxies) reconcileOne(p *proxy) {
 
 	if wanted && !p.subscribed {
 		if err := b.send(p.deviceName, &pb.SubscribeBluetoothLEAdvertisementsRequest{Flags: subscribeRaw}); err != nil {
-			fmt.Printf("esphome: unable to subscribe to %s's advertisements: %v\n", p.deviceName, err)
+			b.log.Error("unable to subscribe to the device's advertisements", "device", p.deviceName, "error", err)
 
 			return
 		}
@@ -229,7 +232,7 @@ func (b *bluetoothProxies) reconcileOne(p *proxy) {
 		p.subscribed = true
 	} else if !wanted && p.subscribed {
 		if err := b.send(p.deviceName, &pb.UnsubscribeBluetoothLEAdvertisementsRequest{}); err != nil {
-			fmt.Printf("esphome: unable to unsubscribe from %s's advertisements: %v\n", p.deviceName, err)
+			b.log.Error("unable to unsubscribe from the device's advertisements", "device", p.deviceName, "error", err)
 
 			return
 		}
@@ -252,7 +255,7 @@ func (b *bluetoothProxies) reconcileOne(p *proxy) {
 	}
 
 	if err := b.send(p.deviceName, &pb.BluetoothScannerSetModeRequest{Mode: desired}); err != nil {
-		fmt.Printf("esphome: unable to set %s's scanning mode: %v\n", p.deviceName, err)
+		b.log.Error("unable to set the device's scanning mode", "device", p.deviceName, "error", err)
 
 		return
 	}
@@ -298,7 +301,7 @@ func (b *bluetoothProxies) advertisements(deviceName string, message *pb.Bluetoo
 			if sighting, due := p.sightings.Observe(&event); due {
 				if err := bluetooth.PublishSighting(b.container, sighting); err != nil {
 					p.state.Dropped()
-					fmt.Printf("esphome: unable to broadcast a sighting heard by %s: %v\n", deviceName, err)
+					b.log.Error("unable to broadcast a sighting", "device", deviceName, "error", err)
 				} else {
 					p.state.Sighted()
 				}
@@ -315,7 +318,7 @@ func (b *bluetoothProxies) advertisements(deviceName string, message *pb.Bluetoo
 
 		if err := bluetooth.PublishAdvertisement(b.container, event); err != nil {
 			p.state.Dropped()
-			fmt.Printf("esphome: unable to broadcast an advertisement heard by %s: %v\n", deviceName, err)
+			b.log.Error("unable to broadcast an advertisement", "device", deviceName, "error", err)
 
 			continue
 		}
@@ -343,7 +346,7 @@ func (b *bluetoothProxies) shutdown() {
 
 	for _, p := range proxies {
 		if err := b.container.DeregisterEntity(p.entityId); err != nil {
-			fmt.Printf("esphome: unable to deregister %s's Bluetooth source: %v\n", p.deviceName, err)
+			b.log.Error("unable to deregister the device's Bluetooth source", "device", p.deviceName, "error", err)
 		}
 	}
 }

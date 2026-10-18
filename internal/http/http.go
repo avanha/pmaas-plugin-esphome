@@ -5,8 +5,10 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"github.com/avanha/pmaas-spi/logging"
 	"html/template"
 	"io"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"time"
@@ -77,6 +79,7 @@ var doorSensorTemplate = spi.TemplateInfo{
 // Handler owns the plugin's HTTP surface: the page, and the renderers for what's on it. It reaches back into
 // the plugin only through entityStore.
 type Handler struct {
+	log         *slog.Logger
 	container   spi.IPMAASContainer
 	entityStore common.EntityStore
 }
@@ -87,6 +90,7 @@ func NewHandler() *Handler {
 
 func (h *Handler) Init(container spi.IPMAASContainer, entityStore common.EntityStore) {
 	h.container = container
+	h.log = logging.For(container, "http")
 	h.entityStore = entityStore
 
 	container.ProvideContentFS(&contentFS, "content")
@@ -173,13 +177,13 @@ func (h *Handler) newDeviceWithChildren(device *data.DeviceView) *deviceWithChil
 	for _, child := range device.Children {
 		kind, known := childKinds[child.Kind()]
 		if !known {
-			fmt.Printf("esphome.http: no renderer for a %q child of %s\n", child.Kind(), device.Name)
+			h.log.Debug("no renderer for a child", "kind", child.Kind(), "name", device.Name)
 			continue
 		}
 
 		renderer, err := h.rendererFactory(kind.template, kind.name, func(entity any) (any, bool) { return entity, true })()
 		if err != nil {
-			fmt.Printf("esphome.http: unable to render a %q child of %s: %v\n", child.Kind(), device.Name, err)
+			h.log.Error("unable to render a child", "kind", child.Kind(), "name", device.Name, "error", err)
 			continue
 		}
 
@@ -205,7 +209,7 @@ func (h *Handler) handleHttpListRequest(w http.ResponseWriter, r *http.Request) 
 	result, err := h.entityStore.GetStatusAndEntities()
 
 	if err != nil {
-		fmt.Printf("esphome.http handleHttpListRequest: unable to retrieve the status: %v\n", err)
+		h.log.Error("unable to retrieve the status", "error", err)
 		result = common.StatusAndEntities{}
 	}
 
@@ -214,7 +218,7 @@ func (h *Handler) handleHttpListRequest(w http.ResponseWriter, r *http.Request) 
 	for _, entity := range result.Entities {
 		device, ok := entity.(*data.DeviceView)
 		if !ok {
-			fmt.Printf("esphome.http handleHttpListRequest: unexpected %T in the list\n", entity)
+			h.log.Debug("unexpected entity in the list", "type", fmt.Sprintf("%T", entity))
 			continue
 		}
 

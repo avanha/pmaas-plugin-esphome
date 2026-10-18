@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -198,7 +199,7 @@ func (s *scriptedDial) callCount() int {
 }
 
 func newTestManager(devices []NativeDeviceConfig, rec *recorder, script *scriptedDial) *nativeManager {
-	m := newNativeManager(devices, rec.callbacks(), func(string, ...any) {})
+	m := newNativeManager(devices, rec.callbacks(), slog.New(slog.DiscardHandler))
 	m.dial = script.dial
 	m.minBackoff = 5 * time.Millisecond
 	m.maxBackoff = 80 * time.Millisecond
@@ -443,7 +444,7 @@ func TestNativeManager_EachDeviceHasItsOwnConnection(t *testing.T) {
 
 	rec := newRecorder()
 	m := newNativeManager(
-		[]NativeDeviceConfig{kaufDevice, {Name: "plug2", Address: "plug2.local"}}, rec.callbacks(), func(string, ...any) {})
+		[]NativeDeviceConfig{kaufDevice, {Name: "plug2", Address: "plug2.local"}}, rec.callbacks(), slog.New(slog.DiscardHandler))
 	m.dial = func(ctx context.Context, cfg nativeapi.Config, handler nativeapi.Handler) (nativeConn, error) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -591,7 +592,7 @@ func TestNativeManager_ACallbackThatWaitsDoesNotLoseOrReorderMessages(t *testing
 		rec.add(fmt.Sprintf("message %s %v", name, m.(*pb.SwitchStateResponse).Key))
 	}
 
-	m := newNativeManager([]NativeDeviceConfig{kaufDevice}, callbacks, func(string, ...any) {})
+	m := newNativeManager([]NativeDeviceConfig{kaufDevice}, callbacks, slog.New(slog.DiscardHandler))
 	m.dial = script.dial
 	m.Start()
 

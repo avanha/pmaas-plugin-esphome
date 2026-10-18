@@ -1,6 +1,7 @@
 package esphome
 
 import (
+	"log/slog"
 	"math"
 	"slices"
 	"strconv"
@@ -107,7 +108,7 @@ func (r *registry) upsertPowerSensor(n *node, e hadiscovery.Entity) {
 
 	toBase := powerConverter(kind, e.UnitOfMeasurement)
 	if toBase == nil {
-		r.logf("%s: ignoring %s sensor %q: unsupported unit %q", n.name, e.DeviceClass, e.ObjectID, e.UnitOfMeasurement)
+		r.logf(slog.LevelWarn, "%s: ignoring %s sensor %q: unsupported unit %q", n.name, e.DeviceClass, e.ObjectID, e.UnitOfMeasurement)
 		r.removeChannel(n, e.Key())
 
 		return
@@ -146,7 +147,7 @@ func (r *registry) registerPowerMonitor(n *node) {
 		func() (any, error) { return p.GetStub(r.container), nil })
 	if err != nil {
 		// Leave n.power nil; the next time the device announces a sensor we'll try again.
-		r.logf("%s: unable to register power monitor: %v", n.name, err)
+		r.logf(slog.LevelError, "%s: unable to register power monitor: %v", n.name, err)
 		return
 	}
 
@@ -160,7 +161,7 @@ func (r *registry) deregisterPowerMonitor(n *node) {
 	}
 
 	if err := r.container.DeregisterEntity(n.power.PmaasEntityId); err != nil {
-		r.logf("unable to deregister power monitor %s: %v", n.power.PmaasEntityId, err)
+		r.logf(slog.LevelError, "unable to deregister power monitor %s: %v", n.power.PmaasEntityId, err)
 	}
 
 	n.power.CloseStubIfPresent()

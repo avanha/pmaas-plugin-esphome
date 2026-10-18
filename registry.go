@@ -1,7 +1,10 @@
 package esphome
 
 import (
+	"context"
 	"fmt"
+	"github.com/avanha/pmaas-spi/logging"
+	"log/slog"
 	"math"
 	"reflect"
 	"regexp"
@@ -57,8 +60,8 @@ type registry struct {
 	offlineWatches map[string]*alert.OfflineWatch
 	startedAt      time.Time
 
-	logf func(format string, args ...any)
-	now  func() time.Time
+	log *slog.Logger
+	now func() time.Time
 }
 
 // node is one ESPHome device: everything announced under its name.
@@ -119,10 +122,8 @@ func newRegistry(container spi.IPMAASContainer, discoveryPrefix string, displayN
 		discoveryPrefix: discoveryPrefix,
 		displayNames:    displayNames,
 		nodes:           make(map[string]*node),
-		logf: func(format string, args ...any) {
-			fmt.Printf("esphome: "+format+"\n", args...)
-		},
-		now: time.Now,
+		log:             logging.For(container, "registry"),
+		now:             time.Now,
 	}
 }
 
@@ -187,7 +188,7 @@ func (r *registry) checkOffline(device string) {
 	}
 
 	if err := watch.Check(r.container, connectivity, since, r.now()); err != nil {
-		r.logf("%s: unable to update the alert about it being offline: %v", device, err)
+		r.logf(slog.LevelError, "%s: unable to update the alert about it being offline: %v", device, err)
 	}
 }
 
@@ -197,7 +198,7 @@ func (r *registry) HandleConnected(device string, address string) {
 		return
 	}
 
-	r.logf("%s: connected from %s", device, address)
+	r.logf(slog.LevelInfo, "%s: connected from %s", device, address)
 
 	n := r.nodeFor(device)
 	n.connected = true
@@ -215,7 +216,7 @@ func (r *registry) HandleDisconnected(device string) {
 		return
 	}
 
-	r.logf("%s: disconnected", device)
+	r.logf(slog.LevelInfo, "%s: disconnected", device)
 
 	n := r.nodeFor(device)
 	n.connected = false
@@ -300,14 +301,14 @@ func (r *registry) Shutdown() {
 func (r *registry) handleDiscovery(device string, topic string, payload []byte) {
 	entity, key, remove, err := hadiscovery.Parse(r.discoveryPrefix, topic, payload)
 	if err != nil {
-		r.logf("%s: %v", device, err)
+		r.logf(slog.LevelWarn, "%s: %v", device, err)
 		return
 	}
 
 	// The broker's ACL only lets a device publish its own configs, but this is what decides which
 	// device an entity belongs to, so don't depend on that.
 	if key.NodeID != device {
-		r.logf("%s: ignoring discovery config for node %q", device, key.NodeID)
+		r.logf(slog.LevelWarn, "%s: ignoring discovery config for node %q", device, key.NodeID)
 		return
 	}
 
@@ -324,7 +325,7 @@ func (r *registry) handleDiscovery(device string, topic string, payload []byte) 
 	// An entity that stops being usable on re-announcement (e.g. it gained a value template) must
 	// not linger with its old, now-wrong topics.
 	if reason := unusable(device, *entity); reason != "" {
-		r.logf("%s: ignoring %s %q: %s", device, entity.Component, entity.ObjectID, reason)
+		r.logf(slog.LevelWarn, "%s: ignoring %s %q: %s", device, entity.Component, entity.ObjectID, reason)
 		r.removeChannel(n, key)
 
 		return
@@ -351,7 +352,7 @@ func (r *registry) upsertEntity(n *node, entity hadiscovery.Entity, logUnsupport
 		r.upsertSwitch(n, entity)
 	default:
 		if logUnsupported {
-			r.logf("%s: ignoring unsupported %s %q (device_class %q): %s",
+			r.logf(slog.LevelWarn, "%s: ignoring unsupported %s %q (device_class %q): %s",
 				n.name, entity.Component, entity.ObjectID, entity.DeviceClass, unsupportedHint(entity))
 		}
 
@@ -423,7 +424,7 @@ func temperatureConverter(unit string) func(float32) float32 {
 func (r *registry) upsertTemperature(n *node, e hadiscovery.Entity) {
 	toBase := temperatureConverter(e.UnitOfMeasurement)
 	if toBase == nil {
-		r.logf("%s: ignoring temperature sensor %q: unsupported unit %q", n.name, e.ObjectID, e.UnitOfMeasurement)
+		r.logf(slog.LevelWarn, "%s: ignoring temperature sensor %q: unsupported unit %q", n.name, e.ObjectID, e.UnitOfMeasurement)
 		r.removeChannel(n, e.Key())
 
 		return
@@ -677,7 +678,7 @@ func (r *registry) registerThermometer(n *node, ch *temperatureChannel) {
 		func() (any, error) { return th.GetStub(r.container), nil })
 	if err != nil {
 		// Leave ch.thermometer nil; the next time the device announces itself we'll try again.
-		r.logf("%s: unable to register thermometer %q: %v", n.name, ch.disc.ObjectID, err)
+		r.logf(slog.LevelError, "%s: unable to register thermometer %q: %v", n.name, ch.disc.ObjectID, err)
 		return
 	}
 
@@ -691,7 +692,7 @@ func (r *registry) deregisterThermometer(ch *temperatureChannel) {
 	}
 
 	if err := r.container.DeregisterEntity(ch.thermometer.PmaasEntityId); err != nil {
-		r.logf("unable to deregister thermometer %s: %v", ch.thermometer.PmaasEntityId, err)
+		r.logf(slog.LevelError, "unable to deregister thermometer %s: %v", ch.thermometer.PmaasEntityId, err)
 	}
 
 	ch.thermometer.CloseStubIfPresent()
@@ -792,7 +793,7 @@ func (r *registry) registerDoor(n *node, ch *doorChannel) {
 		d.Data.Name,
 		func() (any, error) { return d.GetStub(r.container), nil })
 	if err != nil {
-		r.logf("%s: unable to register door sensor %q: %v", n.name, ch.disc.ObjectID, err)
+		r.logf(slog.LevelError, "%s: unable to register door sensor %q: %v", n.name, ch.disc.ObjectID, err)
 		return
 	}
 
@@ -814,7 +815,7 @@ func (r *registry) deregisterDoor(n *node, ch *doorChannel) {
 	}
 
 	if err := r.container.DeregisterEntity(ch.door.PmaasEntityId); err != nil {
-		r.logf("unable to deregister door sensor %s: %v", ch.door.PmaasEntityId, err)
+		r.logf(slog.LevelError, "unable to deregister door sensor %s: %v", ch.door.PmaasEntityId, err)
 	}
 
 	ch.door.CloseStubIfPresent()
@@ -867,7 +868,7 @@ func (r *registry) handleDoorState(n *node, ch *doorChannel, payload []byte) {
 	case ch.disc.StatePayloadOff:
 		r.applyDoorOpen(n, ch, false)
 	default:
-		r.logf("%s: unrecognized door state %q on %s", n.name, payload, ch.disc.StateTopic)
+		r.logf(slog.LevelWarn, "%s: unrecognized door state %q on %s", n.name, payload, ch.disc.StateTopic)
 	}
 }
 
@@ -924,7 +925,7 @@ func (r *registry) broadcastState(id string, entityType reflect.Type, name strin
 
 func (r *registry) broadcast(id string, event any) {
 	if err := r.container.BroadcastEvent(id, event); err != nil {
-		r.logf("unable to broadcast %T for %s: %v", event, id, err)
+		r.logf(slog.LevelError, "unable to broadcast %T for %s: %v", event, id, err)
 	}
 }
 
@@ -935,4 +936,9 @@ func (r *registry) deviceDisplayName(deviceName string) string {
 	}
 
 	return deviceName
+}
+
+// logf logs a message at the level, worded as it is for a person reading the log; the device it is about is in it.
+func (r *registry) logf(level slog.Level, format string, args ...any) {
+	r.log.Log(context.Background(), level, fmt.Sprintf(format, args...))
 }

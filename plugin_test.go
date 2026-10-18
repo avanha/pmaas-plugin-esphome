@@ -2,6 +2,7 @@ package esphome
 
 import (
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -62,7 +63,7 @@ func startPlugin(t *testing.T, config PluginConfig) (*plugin, *pluginContainer) 
 	p := NewPlugin(config).(*plugin)
 	p.registry = nil
 	p.Init(c)
-	p.registry.logf = func(string, ...any) {}
+	p.registry.log = slog.New(slog.DiscardHandler)
 
 	c.onPluginGoroutine(p.Start)
 
@@ -357,10 +358,11 @@ func TestPlugin_LogsWhatTheBrokerRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	original := os.Stdout
-	os.Stdout = writer // the broker's logger is created when the plugin starts
+	// The broker's logger is the plugin's, which a stand-in for the container gets from the default logger.
+	originalLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(writer, nil)))
 
-	defer func() { os.Stdout = original }()
+	defer slog.SetDefault(originalLogger)
 
 	p, c := startPlugin(t, config)
 
@@ -384,7 +386,7 @@ func TestPlugin_LogsWhatTheBrokerRefuses(t *testing.T) {
 	c.onPluginGoroutine(func() { done = p.Stop() })
 	<-done
 
-	os.Stdout = original
+	slog.SetDefault(originalLogger)
 	_ = writer.Close()
 
 	output, _ := io.ReadAll(reader)
@@ -401,18 +403,13 @@ func TestBrokerLogger_DropsTheUnnamedConnectionWarningButKeepsTheRest(t *testing
 		t.Fatal(err)
 	}
 
-	original := os.Stdout
-	os.Stdout = writer
-
-	defer func() { os.Stdout = original }()
-
 	// The broker derives its loggers with With, so check the filter survives that too.
-	logger := brokerLogger().With("listener", "esphome").WithGroup("g") // the logger writes to stdout as of creation
+	logger := brokerLogger(slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: slog.LevelWarn}))).
+		With("listener", "esphome").WithGroup("g")
 	logger.Warn("", "listener", "esphome", "error", io.EOF)
 	logger.Warn("something with a message of its own", "k", "v")
 	logger.Info("not shown: below warning level")
 
-	os.Stdout = original
 	_ = writer.Close()
 
 	output, _ := io.ReadAll(reader)

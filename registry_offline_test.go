@@ -1,6 +1,7 @@
 package esphome
 
 import (
+	"log/slog"
 	"testing"
 	"time"
 
@@ -132,7 +133,7 @@ func TestPluginConfig_OfflineAlertsAreThoseSetOnMqttAndNativeDevices(t *testing.
 
 func TestOfflineChecks_AnAlertWaitingForItsTimeComesDueOnTheMinuteEventWithNothingElseHappening(t *testing.T) {
 	f := newFixture(t)
-	p := &plugin{container: f.container, registry: f.registry}
+	p := &plugin{log: slog.New(slog.DiscardHandler), container: f.container, registry: f.registry}
 	p.proxies = newBluetoothProxies(f.container, p.sendNative, f.registry.deviceDisplayName, nil)
 	f.registry.offlineAlerts = map[string]alert.OfflineAlert{"garage1": alert.WhenOffline(5*time.Minute, nil)}
 
@@ -170,7 +171,7 @@ func TestOfflineChecks_AnAlertWaitingForItsTimeComesDueOnTheMinuteEventWithNothi
 
 func TestOfflineChecks_NoClockListenerWithoutAnAlertAskedFor_AndItIsGivenBackOnStop(t *testing.T) {
 	f := newFixture(t)
-	p := &plugin{container: f.container, registry: f.registry}
+	p := &plugin{log: slog.New(slog.DiscardHandler), container: f.container, registry: f.registry}
 	p.proxies = newBluetoothProxies(f.container, p.sendNative, f.registry.deviceDisplayName, nil)
 
 	p.startOfflineChecks(false)

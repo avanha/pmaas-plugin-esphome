@@ -1,9 +1,11 @@
 package esphome
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -199,7 +201,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{t: t, container: &fakeContainer{}, clock: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)}
 	f.registry = newRegistry(f.container, "homeassistant", map[string]string{"garage1": "Garage 1"})
 	f.registry.now = func() time.Time { return f.clock }
-	f.registry.logf = func(format string, args ...any) { f.logs = append(f.logs, fmt.Sprintf(format, args...)) }
+	f.registry.log = slog.New(recordingHandler{&f.logs})
 
 	return f
 }
@@ -764,3 +766,17 @@ func TestConnectAndDisconnectAreLogged(t *testing.T) {
 		t.Fatalf("logged after shutdown: %v", f.logs)
 	}
 }
+
+// recordingHandler keeps the message of each record, as a person reading the log would see it.
+type recordingHandler struct{ messages *[]string }
+
+func (h recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	*h.messages = append(*h.messages, r.Message)
+
+	return nil
+}
+
+func (h recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h recordingHandler) WithGroup(string) slog.Handler      { return h }
