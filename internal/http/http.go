@@ -228,7 +228,7 @@ func (h *Handler) handleHttpListRequest(w http.ResponseWriter, r *http.Request) 
 	h.container.RenderList(
 		w,
 		r,
-		spi.RenderListOptions{Title: "ESPHome Devices", Header: &result.Status},
+		spi.RenderListOptions{Title: "ESPHome Devices", Header: &result.Status, Masonry: true},
 		entities)
 }
 
