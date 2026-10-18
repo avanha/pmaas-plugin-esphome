@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/avanha/pmaas-common v0.0.5
-	github.com/avanha/pmaas-spi v0.0.14
+	github.com/avanha/pmaas-spi v0.0.15
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/flynn/noise v1.1.0
 	github.com/mochi-mqtt/server/v2 v2.7.9
