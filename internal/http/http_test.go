@@ -721,3 +721,23 @@ func TestSwitchTemplate_TheNameInTheConfirmationIsEscaped(t *testing.T) {
 
 	checkContains(t, out, nil, []string{"<script>"})
 }
+
+func TestDeviceCard_AProxyShowsItsBluetoothActivity(t *testing.T) {
+	out := render(t, deviceTemplate, &deviceWithChildren{
+		DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1", Label: "Proxy", Connected: true, ConnectedSince: time.Now(),
+			LastMessageTime: time.Now().Add(-5 * time.Second),
+			Bluetooth: &data.BluetoothStatus{Scanning: "passive", Batches: 1234, LastBatchTime: time.Now().Add(-5 * time.Second),
+				Heard: 5678, Forwarded: 90, Sighted: 7, Dropped: 2}},
+	})
+
+	checkContains(t, out, []string{"Bluetooth", "passive", "Batches", "1234", "Heard", "5678", "Forwarded", "90", "Sighted", "Dropped", "Last message"}, nil)
+
+	// A device that is not a proxy has none of it, and an idle one doesn't list what is zero.
+	out = render(t, deviceTemplate, &deviceWithChildren{DeviceStatus: data.DeviceStatus{Name: "p", Label: "P", Connected: true}})
+	checkContains(t, out, nil, []string{"Batches", "Forwarded"})
+
+	out = render(t, deviceTemplate, &deviceWithChildren{
+		DeviceStatus: data.DeviceStatus{Name: "b", Label: "B", Connected: true, Bluetooth: &data.BluetoothStatus{Scanning: "off"}},
+	})
+	checkContains(t, out, []string{"Batches", "Heard"}, []string{"Sighted", "Dropped", ", last"})
+}

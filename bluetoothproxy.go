@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/avanha/pmaas-plugin-esphome/data"
 	"github.com/avanha/pmaas-plugin-esphome/internal/nativeapi/pb"
 	spi "github.com/avanha/pmaas-spi"
 	"github.com/avanha/pmaas-spi/bluetooth"
@@ -31,6 +32,12 @@ const proxyRawAdvertisements = 1 << 5
 // subscribeRaw is the flag on the subscription that asks for raw advertisements.
 const subscribeRaw = 1
 
+// silenceLimit is how long a proxy that has been subscribed to may send nothing before it is taken for stuck. A proxy in a
+// house hears something (a thermometer, a phone) every few seconds, so two minutes of nothing is not a quiet house: it is a
+// scanner that stopped, or a subscription the device has dropped or given to someone else (it keeps only one), with the
+// connection itself still up and answering its pings.
+const silenceLimit = 2 * time.Minute
+
 // bluetoothProxies are the Bluetooth proxies among the devices. Methods say which goroutine they run on: the plugin's, or
 // the connection's read loop, which has to be quick (a slow handler makes the device look dead).
 type bluetoothProxies struct {
@@ -38,9 +45,10 @@ type bluetoothProxies struct {
 	container spi.IPMAASContainer
 	interests *bluetooth.Interests
 
-	// send queues a message for a device. now is the time.
-	send func(deviceName string, message proto.Message) error
-	now  func() time.Time
+	// send queues a message for a device. reconnect ends the connection to a device so that it is made again. now is the time.
+	send      func(deviceName string, message proto.Message) error
+	reconnect func(deviceName string)
+	now       func() time.Time
 
 	// displayName is what the device is called on the page.
 	displayName func(deviceName string) string
@@ -66,8 +74,18 @@ type proxy struct {
 	lastBatch time.Time
 
 	// Plugin goroutine:
-	connected        bool
-	subscribed       bool
+	connected  bool
+	subscribed bool
+
+	// subscribedAt is when the subscription was last asked for, and recoveries how many times in a row the proxy has been
+	// found silent and something done about it, which is one step further each time (see checkSilence).
+	subscribedAt time.Time
+	recoveries   int
+
+	// scannerState is the last state the proxy's scanner said it was in, if it has said (stateKnown).
+	scannerState pb.BluetoothScannerState
+	stateKnown   bool
+
 	mode             pb.BluetoothScannerMode
 	modeKnown        bool
 	modeRequested    pb.BluetoothScannerMode
@@ -174,7 +192,8 @@ func (b *bluetoothProxies) disconnected(deviceName string) {
 	}
 
 	// A new connection has nothing subscribed, and may not be in the mode it was left in.
-	p.connected, p.subscribed, p.modeKnown, p.modeWasRequested = false, false, false, false
+	p.connected, p.subscribed, p.modeKnown, p.modeWasRequested, p.stateKnown = false, false, false, false, false
+	p.recoveries = 0
 	p.state.SetConnectivity(environment.ConnectivityOffline, b.now())
 	p.state.SetScanning(bluetooth.ScanOff)
 }
@@ -189,7 +208,20 @@ func (b *bluetoothProxies) scannerState(deviceName string, state *pb.BluetoothSc
 		return
 	}
 
+	changed := !p.stateKnown || p.scannerState != state.GetState() || p.mode != state.GetMode() || !p.modeKnown
 	p.mode, p.modeKnown = state.GetMode(), true
+	p.scannerState, p.stateKnown = state.GetState(), true
+
+	if changed {
+		b.log.Debug("the scanner changed", "device", deviceName, "state", state.GetState().String(), "mode", state.GetMode().String())
+	}
+
+	// A scanner that has failed is not coming back by itself. Subscribing again is what starts it, and the mode is asked for again.
+	if changed && state.GetState() == pb.BluetoothScannerState_BLUETOOTH_SCANNER_STATE_FAILED {
+		b.log.Warn("the proxy's scanner failed, subscribing again", "device", deviceName)
+
+		p.subscribed, p.modeWasRequested = false, false
+	}
 
 	switch {
 	case state.GetState() != pb.BluetoothScannerState_BLUETOOTH_SCANNER_STATE_RUNNING:
@@ -201,6 +233,34 @@ func (b *bluetoothProxies) scannerState(deviceName string, state *pb.BluetoothSc
 	}
 
 	b.reconcileOne(p)
+}
+
+// annotate adds what a proxy has done to the device's view, and counts its last batch as its last message: a proxy that is
+// hearing things sends no other kind, so the time it connected is not when it last said anything. Runs on the plugin goroutine.
+func (b *bluetoothProxies) annotate(view *data.DeviceView) {
+	b.mu.Lock()
+	p := b.proxies[view.Name]
+	b.mu.Unlock()
+
+	if p == nil {
+		return
+	}
+
+	s := p.state.GetSourceData()
+
+	view.Bluetooth = &data.BluetoothStatus{
+		Scanning:      s.Scanning.String(),
+		Batches:       s.Batches,
+		LastBatchTime: s.LastBatch,
+		Heard:         s.Heard,
+		Forwarded:     s.Forwarded,
+		Sighted:       s.Sighted,
+		Dropped:       s.Dropped,
+	}
+
+	if s.LastBatch.After(view.LastMessageTime) {
+		view.LastMessageTime = s.LastBatch
+	}
 }
 
 // reconcile has every connected proxy do what is wanted: listen if anybody wants anything and not otherwise, and scan the way
@@ -233,7 +293,7 @@ func (b *bluetoothProxies) reconcileOne(p *proxy) {
 			return
 		}
 
-		p.subscribed = true
+		p.subscribed, p.subscribedAt = true, b.now()
 	} else if !wanted && p.subscribed {
 		if err := b.send(p.deviceName, &pb.UnsubscribeBluetoothLEAdvertisementsRequest{}); err != nil {
 			b.log.Error("unable to unsubscribe from the device's advertisements", "device", p.deviceName, "error", err)
@@ -242,6 +302,10 @@ func (b *bluetoothProxies) reconcileOne(p *proxy) {
 		}
 
 		p.subscribed = false
+	}
+
+	if wanted && p.subscribed {
+		b.checkSilence(p)
 	}
 
 	if !wanted || !p.modeKnown {
@@ -264,7 +328,60 @@ func (b *bluetoothProxies) reconcileOne(p *proxy) {
 		return
 	}
 
+	b.log.Info("asked the proxy to scan differently", "device", p.deviceName, "mode", desired.String())
+
 	p.modeRequested, p.modeWasRequested = desired, true
+}
+
+// checkSilence finds a subscribed proxy that has stopped sending anything, and does something about it, one step further each
+// time it is found still silent: subscribe again, then end the connection so that it is made afresh, which is what a restart of
+// the scanner or a lost subscription needs and what a power cycle of the device did. Any batch at all counts, wanted or not.
+// Runs on the plugin goroutine, when what is wanted changes and every minute.
+func (b *bluetoothProxies) checkSilence(p *proxy) {
+	now := b.now()
+
+	b.mu.Lock()
+	last := p.lastBatch
+	b.mu.Unlock()
+
+	// Hearing anything since the last step means it worked, however long ago that was: what follows is a new silence.
+	if last.After(p.subscribedAt) {
+		p.recoveries = 0
+	} else {
+		last = p.subscribedAt
+	}
+
+	quiet := now.Sub(last)
+
+	if quiet < silenceLimit {
+		return
+	}
+
+	if p.recoveries == 0 {
+		b.log.Warn("the proxy has sent no advertisements though it is subscribed, subscribing again",
+			"device", p.deviceName, "quiet", quiet.Round(time.Second))
+
+		_ = b.send(p.deviceName, &pb.UnsubscribeBluetoothLEAdvertisementsRequest{})
+
+		if err := b.send(p.deviceName, &pb.SubscribeBluetoothLEAdvertisementsRequest{Flags: subscribeRaw}); err != nil {
+			b.log.Error("unable to subscribe to the device's advertisements", "device", p.deviceName, "error", err)
+
+			return
+		}
+
+		p.subscribedAt, p.recoveries = now, 1
+
+		return
+	}
+
+	b.log.Error("the proxy is still sending no advertisements, reconnecting to it", "device", p.deviceName,
+		"quiet", quiet.Round(time.Second))
+
+	p.recoveries = 0
+
+	if b.reconnect != nil {
+		b.reconnect(p.deviceName)
+	}
 }
 
 // advertisements takes in the advertisements a proxy has heard and broadcasts those that are wanted. Runs on the connection's
@@ -279,6 +396,7 @@ func (b *bluetoothProxies) advertisements(deviceName string, message *pb.Bluetoo
 	}
 
 	now := b.now()
+	p.state.Batch(now)
 
 	// The proxy sends what it has heard in batches, so how big they are and how far apart is how long a frame can have waited.
 	b.mu.Lock()

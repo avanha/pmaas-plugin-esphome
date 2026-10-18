@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"github.com/avanha/pmaas-plugin-esphome/data"
 	"log/slog"
 	"reflect"
 	"sync"
@@ -912,5 +913,190 @@ func TestAdvertisements_ASightingThatCouldNotBeBroadcastIsCountedAsDropped(t *te
 
 	if s := f.source("bt-proxy-1"); s.Heard != 1 || s.Sighted != 0 || s.Dropped != 1 {
 		t.Errorf("source %+v", s)
+	}
+}
+
+// subscribed is a fixture whose proxy is connected, has been asked to listen, and whose reconnections are counted.
+func (f *proxyFixture) subscribedProxy() *int {
+	f.t.Helper()
+
+	reconnects := 0
+	f.proxies.reconnect = func(string) { reconnects++ }
+
+	f.connect("bt-proxy-1")
+	f.want(goveeRule())
+	f.proxies.reconcile()
+
+	return &reconnects
+}
+
+func countOf[T any](messages []proto.Message) int {
+	n := 0
+
+	for _, m := range messages {
+		if _, ok := m.(T); ok {
+			n++
+		}
+	}
+
+	return n
+}
+
+func (f *proxyFixture) minute() {
+	f.clock = f.clock.Add(time.Minute)
+	f.proxies.reconcile()
+}
+
+func TestSilence_AProxyThatSendsNothingIsSubscribedToAgainAndThenReconnected(t *testing.T) {
+	f := newProxyFixture(t)
+	reconnects := f.subscribedProxy()
+
+	// A minute of quiet is nothing.
+	f.minute()
+
+	if got := f.sent.to("bt-proxy-1"); len(got) != 1 {
+		t.Fatalf("after a minute: %v", got)
+	}
+
+	// Two minutes is not a house with nothing to hear: subscribe again.
+	f.minute()
+
+	got := f.sent.to("bt-proxy-1")
+	if countOf[*pb.UnsubscribeBluetoothLEAdvertisementsRequest](got) != 1 || countOf[*pb.SubscribeBluetoothLEAdvertisementsRequest](got) != 2 || *reconnects != 0 {
+		t.Fatalf("after two minutes: %v, %d reconnects", got, *reconnects)
+	}
+
+	// Another minute from the new subscription is still within the limit.
+	f.minute()
+
+	if *reconnects != 0 || len(f.sent.to("bt-proxy-1")) != len(got) {
+		t.Fatalf("a minute after resubscribing: %d reconnects, %v", *reconnects, f.sent.to("bt-proxy-1"))
+	}
+
+	// Silent through the next limit as well: end the connection.
+	f.minute()
+	f.minute()
+
+	if *reconnects != 1 {
+		t.Fatalf("%d reconnects", *reconnects)
+	}
+}
+
+func TestSilence_AnyBatchAtAllMeansTheProxyIsAlive(t *testing.T) {
+	f := newProxyFixture(t)
+	reconnects := f.subscribedProxy()
+
+	for i := 0; i < 10; i++ {
+		f.minute()
+		// Something nobody wants still counts: a phone.
+		f.proxies.advertisements("bt-proxy-1", raw(t, 0x112233445566, -80, proxyAppleFrame))
+	}
+
+	if got := f.sent.to("bt-proxy-1"); len(got) != 1 || *reconnects != 0 {
+		t.Errorf("a proxy that was heard from was treated as stuck: %v, %d reconnects", got, *reconnects)
+	}
+}
+
+func TestSilence_ARecoveryThatWorkedStartsOverNextTime(t *testing.T) {
+	f := newProxyFixture(t)
+	reconnects := f.subscribedProxy()
+
+	f.minute()
+	f.minute() // subscribed again
+
+	f.clock = f.clock.Add(time.Second)
+	f.proxies.advertisements("bt-proxy-1", raw(t, proxyGoveeAddress, -61, proxyGoveeFrame))
+
+	// It stops again, much later: the first step again, not the reconnection.
+	for i := 0; i < 3; i++ {
+		f.minute()
+	}
+
+	if *reconnects != 0 || countOf[*pb.UnsubscribeBluetoothLEAdvertisementsRequest](f.sent.to("bt-proxy-1")) != 2 {
+		t.Errorf("%d reconnects, sent %v", *reconnects, f.sent.to("bt-proxy-1"))
+	}
+}
+
+func TestSilence_NothingIsExpectedOfAProxyNobodyListensTo(t *testing.T) {
+	f := newProxyFixture(t)
+	reconnects := f.subscribedProxy()
+
+	f.want() // nothing wanted any more
+
+	for i := 0; i < 5; i++ {
+		f.minute()
+	}
+
+	if *reconnects != 0 || countOf[*pb.SubscribeBluetoothLEAdvertisementsRequest](f.sent.to("bt-proxy-1")) != 1 {
+		t.Errorf("%d reconnects, sent %v", *reconnects, f.sent.to("bt-proxy-1"))
+	}
+}
+
+func TestScannerState_AFailedScannerIsSubscribedToAgain(t *testing.T) {
+	f := newProxyFixture(t)
+	f.subscribedProxy()
+
+	f.proxies.scannerState("bt-proxy-1", &pb.BluetoothScannerStateResponse{
+		State: pb.BluetoothScannerState_BLUETOOTH_SCANNER_STATE_RUNNING, Mode: pb.BluetoothScannerMode_BLUETOOTH_SCANNER_MODE_PASSIVE})
+
+	before := countOf[*pb.SubscribeBluetoothLEAdvertisementsRequest](f.sent.to("bt-proxy-1"))
+
+	f.proxies.scannerState("bt-proxy-1", &pb.BluetoothScannerStateResponse{
+		State: pb.BluetoothScannerState_BLUETOOTH_SCANNER_STATE_FAILED, Mode: pb.BluetoothScannerMode_BLUETOOTH_SCANNER_MODE_PASSIVE})
+
+	if got := countOf[*pb.SubscribeBluetoothLEAdvertisementsRequest](f.sent.to("bt-proxy-1")); got != before+1 {
+		t.Errorf("%d subscriptions, wanted %d", got, before+1)
+	}
+
+	// Told again, it is not subscribed to again: the state didn't change.
+	f.proxies.scannerState("bt-proxy-1", &pb.BluetoothScannerStateResponse{
+		State: pb.BluetoothScannerState_BLUETOOTH_SCANNER_STATE_FAILED, Mode: pb.BluetoothScannerMode_BLUETOOTH_SCANNER_MODE_PASSIVE})
+
+	if got := countOf[*pb.SubscribeBluetoothLEAdvertisementsRequest](f.sent.to("bt-proxy-1")); got != before+1 {
+		t.Errorf("%d subscriptions after the same state again", got)
+	}
+}
+
+func TestAdvertisements_EachMessageIsCountedAsABatch(t *testing.T) {
+	f := newProxyFixture(t)
+	f.connect("bt-proxy-1")
+	f.want(goveeRule())
+
+	f.clock = f.clock.Add(time.Second)
+	f.proxies.advertisements("bt-proxy-1", raw(t, proxyGoveeAddress, -61, proxyGoveeFrame, proxyAppleFrame))
+	f.clock = f.clock.Add(time.Second)
+	f.proxies.advertisements("bt-proxy-1", raw(t, proxyGoveeAddress, -61, proxyGoveeFrame2))
+
+	if s := f.source("bt-proxy-1"); s.Batches != 2 || s.Heard != 3 || !s.LastBatch.Equal(f.clock) {
+		t.Errorf("%+v", s)
+	}
+}
+
+func TestAnnotate_AProxysBatchesAreItsLastMessageAndItsActivityIsShown(t *testing.T) {
+	f := newProxyFixture(t)
+	f.connect("bt-proxy-1")
+	f.want(goveeRule())
+
+	connectedAt := f.clock
+	f.clock = f.clock.Add(time.Hour)
+	f.proxies.advertisements("bt-proxy-1", raw(t, proxyGoveeAddress, -61, proxyGoveeFrame, proxyAppleFrame))
+
+	view := &data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "bt-proxy-1", LastMessageTime: connectedAt}}
+	f.proxies.annotate(view)
+
+	if view.LastMessageTime != f.clock {
+		t.Errorf("last message %v, want %v", view.LastMessageTime, f.clock)
+	}
+
+	if b := view.Bluetooth; b == nil || b.Batches != 1 || b.Heard != 2 || b.Forwarded != 1 || !b.LastBatchTime.Equal(f.clock) {
+		t.Errorf("%+v", b)
+	}
+
+	// Another device is left as it was.
+	other := &data.DeviceView{DeviceStatus: data.DeviceStatus{Name: "plug", LastMessageTime: connectedAt}}
+	f.proxies.annotate(other)
+
+	if other.Bluetooth != nil || other.LastMessageTime != connectedAt {
+		t.Errorf("%+v", other)
 	}
 }

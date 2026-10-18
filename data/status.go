@@ -104,8 +104,28 @@ type DeviceStatus struct {
 	// EntityCount is how many entities of this device PMAAS is tracking.
 	EntityCount int
 
-	// LastMessageTime is when the device last sent anything. Zero if it never has.
+	// LastMessageTime is when the device last sent anything. Zero if it never has. For a Bluetooth proxy that includes its
+	// batches of advertisements, so it is when it last heard anything.
 	LastMessageTime time.Time
+
+	// Bluetooth is what the device has done as a Bluetooth proxy, or nil if it is not one.
+	Bluetooth *BluetoothStatus
+}
+
+// BluetoothStatus is a Bluetooth proxy's activity since PMAAS started.
+type BluetoothStatus struct {
+	// Scanning is "off", "passive" or "active".
+	Scanning string
+
+	// Batches is how many messages of advertisements it has sent and LastBatchTime when the last came. Heard is the
+	// advertisements in them, Forwarded those the Bluetooth plugin wanted, Sighted the devices told of in sightings, and
+	// Dropped those that could not be decoded or broadcast.
+	Batches       uint64
+	LastBatchTime time.Time
+	Heard         uint64
+	Forwarded     uint64
+	Sighted       uint64
+	Dropped       uint64
 }
 
 // ThermometerView is a thermometer as the page shows it.

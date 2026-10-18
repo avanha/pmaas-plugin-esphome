@@ -46,6 +46,7 @@ func (p *plugin) getStatusAndEntities() common.StatusAndEntities {
 			device.Problem = p.native.problem(configured.Name)
 		}
 
+		p.proxies.annotate(device)
 		devices = append(devices, device)
 	}
 

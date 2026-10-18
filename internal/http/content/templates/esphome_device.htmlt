@@ -33,6 +33,14 @@
         {{if not .LastMessageTime.IsZero}}
             <span class="detail"><span class="label">Last message</span> {{RelativeTime .LastMessageTime}}</span>
         {{end}}
+        {{with .Bluetooth}}
+            <span class="detail"><span class="label">Bluetooth</span> {{.Scanning | html}}</span>
+            <span class="detail"><span class="label">Batches</span> {{.Batches}}{{if not .LastBatchTime.IsZero}}, last {{RelativeTime .LastBatchTime}}{{end}}</span>
+            <span class="detail"><span class="label">Heard</span> {{.Heard}}</span>
+            <span class="detail"><span class="label">Forwarded</span> {{.Forwarded}}</span>
+            {{if .Sighted}}<span class="detail"><span class="label">Sighted</span> {{.Sighted}}</span>{{end}}
+            {{if .Dropped}}<span class="detail"><span class="label">Dropped</span> {{.Dropped}}</span>{{end}}
+        {{end}}
     </div>
     <div class="children">
         {{range .Children}}

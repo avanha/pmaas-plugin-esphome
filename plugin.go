@@ -83,6 +83,7 @@ func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.registry.publish = p.publishCommand
 	p.registry.nativeSend = p.sendNative
 	p.proxies = newBluetoothProxies(container, p.sendNative, p.registry.deviceDisplayName, p.config.bluetoothDisabled())
+	p.proxies.reconnect = p.reconnectNative
 	p.httpHandler.Init(container, &entityStoreAdapter{parent: p})
 }
 
@@ -234,6 +235,23 @@ func (p *plugin) nativeCallbacks() nativeCallbacks {
 				p.proxies.disconnected(deviceName)
 			})
 		},
+	}
+}
+
+// reconnectNative ends the connection to a device reached over the native API, so that the manager makes it again. It runs on the
+// plugin goroutine and returns at once, since closing can wait on a device that has stopped reading.
+func (p *plugin) reconnectNative(deviceName string) {
+	if p.native == nil || p.outbox == nil {
+		return
+	}
+
+	conn := p.native.conn(deviceName)
+	if conn == nil {
+		return
+	}
+
+	if err := p.outbox.Post(func() { _ = conn.Close() }); err != nil {
+		p.log.Error("unable to reconnect to a device", "device", deviceName, "error", err)
 	}
 }
 

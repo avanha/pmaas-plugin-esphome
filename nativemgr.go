@@ -196,7 +196,7 @@ func (m *nativeManager) run(device NativeDeviceConfig) {
 		}
 
 		reason := conn.Err()
-		m.logf(slog.LevelDebug, "%s: connection to %s ended: %v", device.Name, address, reason)
+		m.logf(slog.LevelWarn, "%s: connection to %s ended after %s: %v", device.Name, address, time.Since(started).Round(time.Second), reason)
 
 		if time.Since(started) >= m.stableAfter {
 			backoff = m.minBackoff
