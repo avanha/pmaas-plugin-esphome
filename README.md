@@ -130,8 +130,18 @@ what it has heard and forwarded. To keep one that runs the proxy out of it, set 
   asked to scan actively, and otherwise passively. It is asked once, and a proxy that doesn't change is left alone. Interval
   and window are in the proxy's YAML and can't be changed from here: ESPHome's stock proxy package scans a small fraction
   of the time, and a button that advertises briefly can be missed.
-* **Others using the proxy.** A proxy takes any number of listeners for advertisements, but the scanner's mode is one for all of
-  them, so another client (Home Assistant) that wants a different mode will fight this one.
+* **Others using the proxy.** The scanner's mode is one for all clients, so another client (Home Assistant) that wants a
+  different mode will fight this one. Recent ESPHome firmware may also take only one subscription to advertisements at a time (the
+  device's own log says "Only one API subscription is allowed at a time" when it refuses): a second PMAAS, say one running on a
+  laptop, could then leave the other hearing nothing while its connection looks fine.
+* **A proxy that goes quiet is noticed.** A connected, subscribed proxy that sends no batch of advertisements at all for two
+  minutes (a house is never that quiet) is subscribed to again, with a warning in the log; if it is still silent two minutes
+  later the connection is ended and made again, with an error in the log. A scanner that reports itself failed is subscribed to
+  again at once. Ended connections are logged at warning, with how long they lasted.
+* **Its card shows what it is doing:** the scan mode, how many batches it has sent and when the last came, and how many
+  advertisements it heard, forwarded and dropped since PMAAS started. The card's "Last message" counts its batches, so it is
+  when the proxy last heard anything. If the batch count stops rising while the proxy is connected, something is wrong with
+  it, not with PMAAS.
 
 ## The status page
 
