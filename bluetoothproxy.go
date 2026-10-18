@@ -61,6 +61,9 @@ type proxy struct {
 	// entityId is set once, under the lock, before advertisements are forwarded.
 	entityId string
 
+	// lastBatch is when the proxy last sent advertisements. Under the lock.
+	lastBatch time.Time
+
 	// Plugin goroutine:
 	connected        bool
 	subscribed       bool
@@ -276,6 +279,12 @@ func (b *bluetoothProxies) advertisements(deviceName string, message *pb.Bluetoo
 
 	now := b.now()
 
+	// The proxy sends what it has heard in batches, so how big they are and how far apart is how long a frame can have waited.
+	b.mu.Lock()
+	sinceLastBatch := now.Sub(p.lastBatch)
+	p.lastBatch = now
+	b.mu.Unlock()
+
 	for _, advertised := range message.GetAdvertisements() {
 		p.state.Heard(now)
 
@@ -315,6 +324,9 @@ func (b *bluetoothProxies) advertisements(deviceName string, message *pb.Bluetoo
 		}
 
 		event.Raw = slices.Clone(raw)
+
+		b.log.Debug("forwarding an advertisement", "device", deviceName, "address", event.Address, "rssi", event.RSSI,
+			"batch", len(message.GetAdvertisements()), "sinceLastBatch", sinceLastBatch)
 
 		if err := bluetooth.PublishAdvertisement(b.container, event); err != nil {
 			p.state.Dropped()

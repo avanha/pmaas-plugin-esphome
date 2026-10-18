@@ -250,6 +250,8 @@ func (p *plugin) sendNative(deviceName string, message proto.Message) error {
 	}
 
 	return p.outbox.Post(func() {
+		p.log.Debug("sending a command", "device", deviceName, "type", fmt.Sprintf("%T", message))
+
 		if err := conn.Send(message); err != nil {
 			p.log.Error("unable to send a command", "device", deviceName, "error", err)
 		}
