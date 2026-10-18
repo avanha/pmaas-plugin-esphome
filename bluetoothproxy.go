@@ -1,6 +1,7 @@
 package esphome
 
 import (
+	"encoding/hex"
 	"github.com/avanha/pmaas-spi/logging"
 	"log/slog"
 	"slices"
@@ -326,7 +327,7 @@ func (b *bluetoothProxies) advertisements(deviceName string, message *pb.Bluetoo
 		event.Raw = slices.Clone(raw)
 
 		b.log.Debug("forwarding an advertisement", "device", deviceName, "address", event.Address, "rssi", event.RSSI,
-			"batch", len(message.GetAdvertisements()), "sinceLastBatch", sinceLastBatch)
+			"batch", len(message.GetAdvertisements()), "sinceLastBatch", sinceLastBatch, "raw", hex.EncodeToString(raw))
 
 		if err := bluetooth.PublishAdvertisement(b.container, event); err != nil {
 			p.state.Dropped()
