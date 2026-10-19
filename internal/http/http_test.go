@@ -120,7 +120,7 @@ func TestThermometerTemplate(t *testing.T) {
 	})
 
 	checkContains(t, out,
-		[]string{"Garage Temperature", "20.0 C", "68.0 F", "39.2%", "5m ago"},
+		[]string{"Garage Temperature", "20.00 C", "68.00 F", "39.2%", "5m ago"},
 		// The device's name is on its card, and isn't repeated under each thing it has.
 		[]string{"offline", "Waiting for data", "garagedoor1"})
 
