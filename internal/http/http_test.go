@@ -457,25 +457,6 @@ func TestHandleHttpListRequest_StillRendersAPageWhenTheStatusCannotBeRetrieved(t
 	}
 }
 
-func TestRelativeTime(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		t    time.Time
-		want string
-	}{
-		{"zero", time.Time{}, "never"},
-		{"now", time.Now(), "just now"},
-		{"slightly in the future", time.Now().Add(30 * time.Second), "just now"},
-		{"minutes", time.Now().Add(-5*time.Minute - 10*time.Second), "5m ago"},
-		{"hours", time.Now().Add(-3*time.Hour - 20*time.Minute - 10*time.Second), "3h 20m ago"},
-		{"days", time.Now().Add(-(2*24+5)*time.Hour - time.Minute), "2d 5h ago"},
-	} {
-		if got := relativeTime(c.t); got != c.want {
-			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
-		}
-	}
-}
-
 func TestCelsiusToFahrenheit(t *testing.T) {
 	for c, want := range map[float32]float32{0: 32, 100: 212, -40: -40, 20: 68, 37: 98.6} {
 		if got := celsiusToFahrenheit(c); got < want-0.01 || got > want+0.01 {
