@@ -24,8 +24,8 @@ var contentFS embed.FS
 // escaping, so every string a template prints has to go through the html function itself.
 
 var funcMap = template.FuncMap{
-	"RelativeTime":        format.Ago,
-	"CelsiusToFahrenheit": celsiusToFahrenheit,
+	"RelativeTime": format.Ago,
+	"Temperature":  format.Temperature, "Fahrenheit": format.Fahrenheit, "Humidity": format.Humidity,
 }
 
 // deviceFuncMap is for the device card, which renders its children with RenderChild.
@@ -310,8 +310,4 @@ func (h *Handler) rendererFactory(
 			Scripts:             compiledTemplate.Scripts,
 		}, nil
 	}
-}
-
-func celsiusToFahrenheit(celsius float32) float32 {
-	return celsius*9/5 + 32
 }

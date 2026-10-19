@@ -457,14 +457,6 @@ func TestHandleHttpListRequest_StillRendersAPageWhenTheStatusCannotBeRetrieved(t
 	}
 }
 
-func TestCelsiusToFahrenheit(t *testing.T) {
-	for c, want := range map[float32]float32{0: 32, 100: 212, -40: -40, 20: 68, 37: 98.6} {
-		if got := celsiusToFahrenheit(c); got < want-0.01 || got > want+0.01 {
-			t.Errorf("celsiusToFahrenheit(%v) = %v, want %v", c, got, want)
-		}
-	}
-}
-
 func TestSwitchTemplate_EachState(t *testing.T) {
 	changed := time.Now().Add(-26 * time.Hour)
 

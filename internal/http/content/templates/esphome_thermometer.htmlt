@@ -9,10 +9,10 @@
         <div class="waiting">Waiting for data</div>
     {{else}}
         <div class="reading">
-            <div class="temp-celsius">{{printf "%.1f" .Temperature}} C</div>
-            <div class="temp-fahrenheit">{{CelsiusToFahrenheit .Temperature | printf "%.1f"}} F</div>
+            <div class="temp-celsius">{{Temperature .Temperature}} C</div>
+            <div class="temp-fahrenheit">{{Fahrenheit .Temperature}} F</div>
             {{if .HasHumidity}}
-                <div class="humidity"><i class="bi bi-droplet-fill"></i> {{printf "%.1f" .Humidity}}%</div>
+                <div class="humidity"><i class="bi bi-droplet-fill"></i> {{Humidity .Humidity}}%</div>
             {{end}}
         </div>
         <div class="timestamp"><i class="bi bi-stopwatch"></i> {{RelativeTime .LastUpdateTime}}</div>
