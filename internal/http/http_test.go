@@ -125,7 +125,7 @@ func TestThermometerTemplate(t *testing.T) {
 		[]string{"offline", "Waiting for data", "garagedoor1"})
 
 	out = render(t, thermometerTemplate, &data.ThermometerView{Name: "T", DeviceConnected: true, HasData: true, Temperature: 21.5})
-	checkContains(t, out, []string{"21.5 C", "70.7 F"}, []string{"droplet"})
+	checkContains(t, out, []string{"21.50 C", "70.70 F"}, []string{"droplet"})
 }
 
 func TestThermometerTemplate_WaitingAndOffline(t *testing.T) {
