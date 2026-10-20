@@ -8,6 +8,7 @@ import (
 
 	"github.com/avanha/pmaas-spi/common"
 	"github.com/avanha/pmaas-spi/device"
+	"github.com/avanha/pmaas-spi/entity"
 )
 
 var (
@@ -30,6 +31,28 @@ type DeviceHandle struct {
 	mu       sync.Mutex
 	switches []*handleSwitch
 	doors    []*handleDoor
+
+	// entityId is the id of the device's own entity, once the plugin has registered it.
+	entityId string
+}
+
+// DeviceHandle is an entity.Ref, so that the assembly can put the device in a group: the entity is the device, which a page of groups
+// shows as its card with what is inside it.
+var _ entity.Ref = (*DeviceHandle)(nil)
+
+// EntityId is the id of the device's entity, or false before the plugin has started and after it has stopped.
+func (h *DeviceHandle) EntityId() (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.entityId, h.entityId != ""
+}
+
+func (h *DeviceHandle) setEntityId(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.entityId = id
 }
 
 type handleSwitch struct {

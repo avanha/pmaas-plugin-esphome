@@ -153,6 +153,7 @@ func (r *registry) registerPowerMonitor(n *node) {
 
 	p.PmaasEntityId = id
 	n.power = p
+	r.giveView(id, n.name)
 }
 
 func (r *registry) deregisterPowerMonitor(n *node) {

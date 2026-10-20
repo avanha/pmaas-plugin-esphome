@@ -116,6 +116,18 @@ func (h *Handler) Init(container spi.IPMAASContainer, entityStore common.EntityS
 			device, ok := entity.(*deviceWithChildren)
 			return device, ok
 		}))
+	// The card of a device on a page that isn't ours (see the plugin's view of a device): the data it is made from, which the card is
+	// then made of here, as it is for the page.
+	container.RegisterEntityRenderer(
+		reflect.TypeFor[data.DeviceView](), // a page looks a pointer up by what it points to
+		h.rendererFactory(&deviceTemplate, "esphome_device", func(entity any) (any, bool) {
+			device, ok := entity.(*data.DeviceView)
+			if !ok {
+				return nil, false
+			}
+
+			return h.newDeviceWithChildren(device), true
+		}))
 	container.AddJsonRoute(
 		"switch",
 		func() any { return &switchRequest{} },

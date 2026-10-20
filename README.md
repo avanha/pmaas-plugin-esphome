@@ -325,6 +325,23 @@ func addEsphome(coreConfig *config.Config) {
 }
 ```
 
+### Putting devices in groups
+
+Each configured device is also an **entity** (it has no stub: nothing is done through it), registered whether or not the device is
+connected, so that it can be named from the assembly. The handle `AddDevice` and `AddNativeDevice` return is an `entity.Ref`; give it to
+the groups plugin (`pmaas-plugin-groups`):
+
+```go
+garage := conf.AddNativeDevice(esphome.NativeDeviceConfig{Name: "garagedoor1", ...})
+// ...
+cougar.Group("Garage").Add(garage)
+```
+
+A page of groups shows the device as its card, the same card as this plugin's page, with the switches, power, door sensors and
+thermometers inside it. Those are entities of their own, and have the device's card as their view too, so the card is drawn once,
+whichever of them is in a group. It is listed under the kind the device mostly is: **Switches** if it has a switch (a plug is a switch
+whatever else it reports), else Sensors for a door sensor, Thermometers, or Power.
+
 ## Roadmap
 
 1. **Phase 1 (this):** broker with per-device authentication and ACLs, discovery parsing, thermometers

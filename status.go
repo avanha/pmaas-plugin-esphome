@@ -31,23 +31,13 @@ func (p *plugin) getStatusAndEntities() common.StatusAndEntities {
 	var devices []*data.DeviceView
 
 	for _, configured := range p.config.Devices {
-		device := p.registry.deviceView(configured.Name)
-		device.Transport = "MQTT"
-		devices = append(devices, device)
+		devices = append(devices, p.deviceViewOf(configured.Name, false))
 	}
 
 	nativeDevices, _ := p.config.validNativeDevices()
 
 	for _, configured := range nativeDevices {
-		device := p.registry.deviceView(configured.Name)
-		device.Transport = "Native API"
-
-		if p.native != nil {
-			device.Problem = p.native.problem(configured.Name)
-		}
-
-		p.proxies.annotate(device)
-		devices = append(devices, device)
+		devices = append(devices, p.deviceViewOf(configured.Name, true))
 	}
 
 	entities := make([]any, 0, len(devices))

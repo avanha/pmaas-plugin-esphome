@@ -181,8 +181,8 @@ func TestPlugin_EndToEndWithADeviceAsESPHomeActuallyBehaves(t *testing.T) {
 	})
 
 	c.onPluginGoroutine(func() {
-		if len(c.registrations) != 2 {
-			t.Errorf("expected a thermometer and a door sensor (and nothing for the LED), got %+v", c.registrations)
+		if len(c.registrations) != 3 { // the device, its thermometer and its door sensor
+			t.Errorf("expected the device, a thermometer and a door sensor (and nothing for the LED), got %+v", c.registrations)
 		}
 	})
 
@@ -240,8 +240,8 @@ func TestPlugin_EndToEndWithADeviceAsESPHomeActuallyBehaves(t *testing.T) {
 	}
 
 	c.onPluginGoroutine(func() {
-		if len(c.deregistered) != 2 {
-			t.Errorf("expected both entities deregistered, got %v", c.deregistered)
+		if len(c.deregistered) != 3 {
+			t.Errorf("expected the device and both entities deregistered, got %v", c.deregistered)
 		}
 	})
 

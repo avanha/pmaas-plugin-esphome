@@ -46,6 +46,10 @@ type registry struct {
 	control  map[string]SwitchControl
 	failures map[string]*passwordFailures
 
+	// entityView is how an entity of a device looks on a page that lists entities of many plugins: the device's card (see
+	// giveView). The plugin sets it.
+	entityView func(deviceName string) spi.EntityView
+
 	// nativeSend sends a message to a device over the native API, and like publish returns once it's queued.
 	nativeSend func(deviceName string, message proto.Message) error
 
@@ -684,6 +688,7 @@ func (r *registry) registerThermometer(n *node, ch *temperatureChannel) {
 
 	th.PmaasEntityId = id
 	ch.thermometer = th
+	r.giveView(id, n.name)
 }
 
 func (r *registry) deregisterThermometer(ch *temperatureChannel) {
@@ -799,6 +804,7 @@ func (r *registry) registerDoor(n *node, ch *doorChannel) {
 
 	d.PmaasEntityId = id
 	ch.door = d
+	r.giveView(id, n.name)
 
 	if handle := r.handles[n.name]; handle != nil {
 		handle.doorRegistered(id, d.Data.Name, d.GetStub(r.container))

@@ -41,6 +41,7 @@ type fakeContainer struct {
 	spi.IPMAASContainer
 
 	registrations []registration
+	views         map[string]spi.EntityViewFunc
 	deregistered  []string
 	broadcasts    []broadcast
 	broadcastMu   sync.Mutex
@@ -96,6 +97,16 @@ func (c *fakeContainer) RegisterEntity(
 	c.registrations = append(c.registrations, registration{id, uniqueData, entityType, name, stubFactoryFn})
 
 	return id, nil
+}
+
+func (c *fakeContainer) RegisterEntityView(id string, view spi.EntityViewFunc) error {
+	if c.views == nil {
+		c.views = make(map[string]spi.EntityViewFunc)
+	}
+
+	c.views[id] = view
+
+	return nil
 }
 
 func (c *fakeContainer) DeregisterEntity(id string) error {

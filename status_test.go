@@ -386,7 +386,7 @@ func TestInit_RegistersThePageAndTheRenderers(t *testing.T) {
 		names[entityType.Name()] = true
 	}
 
-	if !names["PluginStatus"] || !names["deviceWithChildren"] || len(container.rendererTypes) != 2 || container.staticDir != "static" {
+	if !names["PluginStatus"] || !names["deviceWithChildren"] || !names["DeviceView"] || len(container.rendererTypes) != 3 || container.staticDir != "static" {
 		t.Errorf("unexpected registrations: %v, static %q", container.rendererTypes, container.staticDir)
 	}
 
@@ -394,7 +394,7 @@ func TestInit_RegistersThePageAndTheRenderers(t *testing.T) {
 		t.Error("no route registered to turn a switch on and off")
 	}
 
-	if len(container.rendererTypes) != 2 || container.staticDir != "static" {
+	if len(container.rendererTypes) != 3 || container.staticDir != "static" {
 		t.Errorf("unexpected registrations: %v, static %q", container.rendererTypes, container.staticDir)
 	}
 }

@@ -149,7 +149,7 @@ func TestPlugin_ANativeDeviceIsRegisteredAndControlledAndStopsCleanly(t *testing
 	p, c := startNativePlugin(t, config, aKaufPlugDial(conns))
 
 	eventually(t, c, "the switch and its power", func() bool {
-		return len(c.registrations) == 2 && p.registry.switchViews()[0].HasData && p.registry.powerViews()[0].HasPower
+		return len(c.registrations) == 3 && p.registry.switchViews()[0].HasData && p.registry.powerViews()[0].HasPower
 	})
 
 	var views struct {
@@ -217,8 +217,8 @@ func TestPlugin_ANativeDeviceIsRegisteredAndControlledAndStopsCleanly(t *testing
 	}
 
 	c.onPluginGoroutine(func() {
-		if len(c.deregistered) != 2 {
-			t.Errorf("expected both entities deregistered, got %v", c.deregistered)
+		if len(c.deregistered) != 3 { // the switch, its power, and the device
+			t.Errorf("expected the device and both entities deregistered, got %v", c.deregistered)
 		}
 	})
 
@@ -281,7 +281,7 @@ func TestPlugin_ABadNativeEntryIsSkippedAndTheRestRun(t *testing.T) {
 
 	nextConn(t, conns)
 
-	eventually(t, c, "the good device", func() bool { return len(c.registrations) == 2 })
+	eventually(t, c, "the good device", func() bool { return len(c.registrations) == 3 }) // its device, switch and power
 
 	c.onPluginGoroutine(func() {
 		if devices := deviceViews(t, p.getStatusAndEntities().Entities); len(devices) != 1 || devices[0].Name != "plug1" {
@@ -312,7 +312,7 @@ func TestPlugin_NativeAndMQTTDevicesRunTogether(t *testing.T) {
 	client.Publish("garagedoor1/binary_sensor/garage_door_position/state", 0, true, "OFF").WaitTimeout(2 * time.Second)
 
 	eventually(t, c, "devices of both kinds", func() bool {
-		return len(c.registrations) == 3 // the door, and the plug's switch and power
+		return len(c.registrations) == 5 // the door, the plug's switch and power, and the two devices
 	})
 
 	c.onPluginGoroutine(func() {

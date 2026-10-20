@@ -60,6 +60,11 @@ type plugin struct {
 
 	// proxies are the devices that are Bluetooth proxies, which are sources of advertisements.
 	proxies *bluetoothProxies
+
+	// deviceEntities are the entities registered for the configured devices (see registerDevices), and nativeNames the names of those that
+	// are native API devices.
+	deviceEntities []deviceEntity
+	nativeNames    map[string]bool
 }
 
 // Force implementation of spi.IPMAASPlugin
@@ -82,6 +87,7 @@ func (p *plugin) Init(container spi.IPMAASContainer) {
 	p.registry.offlineAlerts = p.config.offlineAlerts()
 	p.registry.publish = p.publishCommand
 	p.registry.nativeSend = p.sendNative
+	p.registry.entityView = p.entityViewOf
 	p.proxies = newBluetoothProxies(container, p.sendNative, p.registry.deviceDisplayName, p.config.bluetoothDisabled())
 	p.proxies.reconnect = p.reconnectNative
 	p.httpHandler.Init(container, &entityStoreAdapter{parent: p})
@@ -101,6 +107,8 @@ func (p *plugin) Start() {
 	for _, problem := range controlProblems {
 		p.log.Error("invalid configuration", "problem", problem)
 	}
+
+	p.registerDevices(nativeDevices)
 
 	if len(p.config.Devices) == 0 && len(nativeDevices) == 0 {
 		p.brokerProblem = "no devices are configured"
@@ -394,6 +402,7 @@ func (p *plugin) Stop() chan func() {
 	// Deregister every entity, and from here on ignore anything devices still send. This only touches
 	// state owned by this goroutine and doesn't wait on anything, so it's safe to do right here.
 	p.registry.Shutdown()
+	p.deregisterDevices()
 	p.proxies.shutdown()
 
 	if p.interestReceiverRegistered {

@@ -73,6 +73,7 @@ func (r *registry) registerSwitch(n *node, ch *switchChannel) {
 
 	sw.PmaasEntityId = id
 	ch.sw = sw
+	r.giveView(id, n.name)
 
 	if handle := r.handles[n.name]; handle != nil {
 		handle.switchRegistered(id, sw.Data.Name, sw.GetStub(r.container))
