@@ -40,8 +40,8 @@ type DeviceHandle struct {
 // shows as its card with what is inside it.
 var _ entity.Ref = (*DeviceHandle)(nil)
 
-// EntityId is the id of the device's entity, or false before the plugin has started and after it has stopped.
-func (h *DeviceHandle) EntityId() (string, bool) {
+// RegisteredId is the id of the device's entity, or false before the plugin has started and after it has stopped.
+func (h *DeviceHandle) RegisteredId() (string, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

@@ -12,7 +12,7 @@ func TestDeviceEntity_IsRegisteredForAConfiguredDeviceAndItsHandleNamesIt(t *tes
 	config := NewPluginConfig()
 	handle := config.AddNativeDevice(NativeDeviceConfig{Name: "plug1", Address: "10.0.0.7", DisplayName: "Heater"})
 
-	if _, ok := handle.EntityId(); ok {
+	if _, ok := handle.RegisteredId(); ok {
 		t.Fatal("the handle has an entity id before the plugin has started")
 	}
 
@@ -36,13 +36,13 @@ func TestDeviceEntity_IsRegisteredForAConfiguredDeviceAndItsHandleNamesIt(t *tes
 		t.Fatalf("%+v", found)
 	}
 
-	if id, ok := handle.EntityId(); !ok || id != found.id {
+	if id, ok := handle.RegisteredId(); !ok || id != found.id {
 		t.Errorf("%q %v, want %q", id, ok, found.id)
 	}
 
 	stopPlugin(t, p, c)
 
-	if _, ok := handle.EntityId(); ok {
+	if _, ok := handle.RegisteredId(); ok {
 		t.Error("the handle still has an entity id after the plugin stopped")
 	}
 }
