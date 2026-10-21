@@ -689,11 +689,19 @@ func (r *registry) registerThermometer(n *node, ch *temperatureChannel) {
 	th.PmaasEntityId = id
 	ch.thermometer = th
 	r.giveView(id, n.name)
+
+	if handle := r.handles[n.name]; handle != nil {
+		handle.thermometerRegistered(id, th.Data.Name)
+	}
 }
 
 func (r *registry) deregisterThermometer(ch *temperatureChannel) {
 	if ch.thermometer == nil {
 		return
+	}
+
+	for _, handle := range r.handles {
+		handle.thermometerDeregistered(ch.thermometer.PmaasEntityId)
 	}
 
 	if err := r.container.DeregisterEntity(ch.thermometer.PmaasEntityId); err != nil {
@@ -749,6 +757,12 @@ func (r *registry) refreshThermometers(n *node) {
 
 		if data == ch.thermometer.Data {
 			continue
+		}
+
+		if data.Name != ch.thermometer.Data.Name {
+			if handle := r.handles[n.name]; handle != nil {
+				handle.thermometerRenamed(ch.thermometer.PmaasEntityId, data.Name)
+			}
 		}
 
 		ch.thermometer.Data = data

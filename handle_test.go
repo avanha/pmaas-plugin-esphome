@@ -339,3 +339,44 @@ func TestHandle_ADoorToldOfTwiceIsKeptOnceWithTheLatestStub(t *testing.T) {
 }
 
 type stubDoor struct{ device.IDoorSensor }
+
+func TestHandle_AThermometerRefHasNoIdUntilTheDeviceHasAnnouncedItAndThenFollowsItsNameAndGoes(t *testing.T) {
+	f := newFixture(t)
+	handle := f.withHandle("garage1")
+	only, named := handle.Thermometer(""), handle.Thermometer("Garage 1 Air")
+
+	if _, ok := only.RegisteredId(); ok {
+		t.Fatal("has an id before the device announced a thermometer")
+	}
+
+	f.registry.HandleConnected("garage1", "10.0.0.1")
+	f.discover("garage1", "sensor", "temperature", sensorConfig("garage1", "temperature", "Temperature", "temperature", "°C"))
+
+	if id, ok := only.RegisteredId(); !ok || id != "esphome_garage1/temperature" {
+		t.Errorf("the only one: %q %v", id, ok)
+	}
+
+	if _, ok := named.RegisteredId(); ok {
+		t.Error("found by a name it doesn't have yet")
+	}
+
+	f.state("garage1", "garage1/sensor/temperature/state", "20")
+	f.discover("garage1", "sensor", "temperature", sensorConfig("garage1", "temperature", "Air", "temperature", "°C"))
+
+	if id, ok := named.RegisteredId(); !ok || id != "esphome_garage1/temperature" {
+		t.Errorf("by its new name: %q %v", id, ok)
+	}
+
+	// With two, the one without a name is ambiguous.
+	f.discover("garage1", "sensor", "outside", sensorConfig("garage1", "outside", "Outside", "temperature", "°C"))
+
+	if _, ok := only.RegisteredId(); ok {
+		t.Error("an ambiguous ref has an id")
+	}
+
+	handle.thermometerDeregistered("esphome_garage1/temperature")
+
+	if _, ok := named.RegisteredId(); ok {
+		t.Error("still has an id after the thermometer was deregistered")
+	}
+}

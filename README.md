@@ -342,6 +342,10 @@ thermometers inside it. Those are entities of their own, and have the device's c
 whichever of them is in a group. It is listed under the kind the device mostly is: **Switches** if it has a switch (a plug is a switch
 whatever else it reports), else Sensors for a door sensor, Thermometers, or Power.
 
+To put one of the device's thermometers in a group on its own, use `garage.Thermometer("")` (its name as shown on the page, or empty for
+the device's only one), which is an `entity.Ref` too. The environment plugin's card for it has more on it than the device's, so
+name it to that plugin: `environmentConfig.Of(garage.Thermometer(""))`.
+
 ## Roadmap
 
 1. **Phase 1 (this):** broker with per-device authentication and ACLs, discovery parsing, thermometers

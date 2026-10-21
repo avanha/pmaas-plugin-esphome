@@ -32,6 +32,8 @@ type DeviceHandle struct {
 	switches []*handleSwitch
 	doors    []*handleDoor
 
+	thermometers []*handleThermometer
+
 	// entityId is the id of the device's own entity, once the plugin has registered it.
 	entityId string
 }
@@ -249,4 +251,76 @@ func (p *doorProxy) GetDoorSensorData() device.DoorSensor {
 	}
 
 	return stub.GetDoorSensorData()
+}
+
+type handleThermometer struct {
+	id   string
+	name string
+}
+
+// Thermometer is the entity of one of the device's thermometers, by its name as shown on the page, or the device's only thermometer if
+// name is empty, for putting it in a group (see the groups plugin) or naming it to the environment plugin (see its Of). Which one is
+// worked out at each use, from what the device has announced by then, so it can be handed over before the device has connected.
+func (h *DeviceHandle) Thermometer(name string) entity.Ref {
+	return &thermometerRef{handle: h, name: name}
+}
+
+// thermometerRef is an entity.Ref for a thermometer that may not exist yet.
+type thermometerRef struct {
+	handle *DeviceHandle
+	name   string
+}
+
+var _ entity.Ref = (*thermometerRef)(nil)
+
+// RegisteredId is the id of the thermometer's entity, or false if there is no such thermometer (yet), or the name is empty and the
+// device has several.
+func (r *thermometerRef) RegisteredId() (string, bool) {
+	r.handle.mu.Lock()
+	defer r.handle.mu.Unlock()
+
+	if r.name == "" {
+		if len(r.handle.thermometers) == 1 {
+			return r.handle.thermometers[0].id, true
+		}
+
+		return "", false
+	}
+
+	for _, t := range r.handle.thermometers {
+		if t.name == r.name {
+			return t.id, true
+		}
+	}
+
+	return "", false
+}
+
+// thermometerRegistered is for the registry: a thermometer has been registered. Called on the plugin goroutine.
+func (h *DeviceHandle) thermometerRegistered(id string, name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.thermometers = slices.DeleteFunc(h.thermometers, func(t *handleThermometer) bool { return t.id == id })
+	h.thermometers = append(h.thermometers, &handleThermometer{id: id, name: name})
+}
+
+// thermometerRenamed is for the registry: the thermometer has a new name.
+func (h *DeviceHandle) thermometerRenamed(id string, name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, t := range h.thermometers {
+		if t.id == id {
+			t.name = name
+		}
+	}
+}
+
+// thermometerDeregistered is for the registry: the thermometer is gone.
+func (h *DeviceHandle) thermometerDeregistered(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.thermometers = slices.DeleteFunc(h.thermometers, func(t *handleThermometer) bool { return t.id == id })
 }
