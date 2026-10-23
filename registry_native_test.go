@@ -552,6 +552,41 @@ func TestNative_ConfigurationAndDisabledEntitiesAreNotEntities(t *testing.T) {
 	}
 }
 
+// The ESP's own temperature (the internal_temperature sensor of an Athom relay) is a temperature sensor, but ESPHome marks it as a diagnostic,
+// and it measures the chip and not the room: it is not a thermometer, which would be listed with the rooms' and be put in the
+// environment plugin's. A temperature sensor that isn't marked is one.
+func TestNative_TheChipsOwnTemperatureIsNotAThermometerButARoomsIs(t *testing.T) {
+	f := newFixture(t)
+	f.registry.displayNames = map[string]string{}
+	f.registry.HandleConnected("relay1", "10.0.0.8")
+	f.native("relay1",
+		&pb.ListEntitiesSwitchResponse{ObjectId: "relay", Key: 1, Name: "Relay"},
+		&pb.ListEntitiesSensorResponse{
+			ObjectId: "internal_temperature", Key: 2, Name: "Internal Temperature", DeviceClass: "temperature", UnitOfMeasurement: "°C",
+			EntityCategory: pb.EntityCategory_ENTITY_CATEGORY_DIAGNOSTIC,
+		},
+		&pb.ListEntitiesSensorResponse{ObjectId: "room", Key: 3, Name: "Room Temperature", DeviceClass: "temperature", UnitOfMeasurement: "°C"},
+		&pb.ListEntitiesDoneResponse{})
+
+	for _, r := range f.container.registrations {
+		if r.entityType == wirelessThermometerType && r.uniqueData != "relay1/room" {
+			t.Errorf("a thermometer for %q", r.uniqueData)
+		}
+	}
+
+	thermometers := 0
+
+	for _, r := range f.container.registrations {
+		if r.entityType == wirelessThermometerType {
+			thermometers++
+		}
+	}
+
+	if thermometers != 1 {
+		t.Errorf("%d thermometers: %+v", thermometers, f.container.registrations)
+	}
+}
+
 // If a device that listed an entity before marks it as configuration now, it's dropped like anything else the
 // device no longer offers.
 func TestNative_AnEntityThatBecomesHiddenIsDropped(t *testing.T) {
