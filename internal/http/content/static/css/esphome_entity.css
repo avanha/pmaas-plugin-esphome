@@ -6,7 +6,6 @@
 .entity-esphome-power {
     display: flex;
     flex-flow: column;
-    gap: 3px;
 }
 
 .entity-esphome-thermometer .title-row,
@@ -17,7 +16,6 @@
     flex-flow: row nowrap;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
 }
 
 .entity-esphome-thermometer .name,
@@ -25,6 +23,7 @@
 .entity-esphome-switch .name,
 .entity-esphome-power .name {
     font-weight: bold;
+    word-wrap: break-word;
     overflow-wrap: anywhere;
 }
 
@@ -54,7 +53,6 @@
     display: flex;
     flex-flow: row wrap;
     align-items: baseline;
-    gap: 2px 12px;
 }
 
 .entity-esphome-thermometer .temp-celsius {
@@ -70,7 +68,6 @@
     display: flex;
     flex-flow: row nowrap;
     align-items: center;
-    gap: 8px;
 }
 
 .entity-esphome-door-sensor .door-icon {
@@ -116,7 +113,6 @@
     display: flex;
     flex-flow: row nowrap;
     align-items: center;
-    gap: 8px;
 }
 
 .entity-esphome-switch .switch-icon {
@@ -176,7 +172,6 @@
     display: flex;
     flex-flow: row wrap;
     align-items: baseline;
-    gap: 2px 12px;
 }
 
 .entity-esphome-power .power {
@@ -195,8 +190,29 @@
     opacity: 0.7;
 }
 
-/* The dialog that asks. */
-dialog.esphome-confirm {
+/* The dialog that asks. It is a <dialog> where the browser has one, and else (Safari before 15.4, so an old iPad) a box of the same
+   class in a layer over the page, which esphome_switch.js builds: the box needs a background of its own, which a <dialog> has by default. */
+.esphome-confirm-overlay {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.esphome-confirm-overlay .esphome-confirm {
+    background: #ffffff;
+    color: #000000;
+    box-sizing: border-box;
+    min-width: 260px;
+}
+
+.esphome-confirm {
     border: 1px solid #a19f9c;
     border-radius: 6px;
     padding: 16px 18px;
@@ -204,17 +220,18 @@ dialog.esphome-confirm {
     font-family: Arial, Helvetica, sans-serif;
 }
 
-dialog.esphome-confirm::backdrop {
+.esphome-confirm::backdrop {
     background: rgba(0, 0, 0, 0.4);
 }
 
-dialog.esphome-confirm .message {
+.esphome-confirm .message {
     margin: 0 0 12px 0;
     font-weight: bold;
+    word-wrap: break-word;
     overflow-wrap: anywhere;
 }
 
-dialog.esphome-confirm .password {
+.esphome-confirm .password {
     display: block;
     box-sizing: border-box;
     width: 100%;
@@ -223,19 +240,18 @@ dialog.esphome-confirm .password {
     font-size: 1em;
 }
 
-dialog.esphome-confirm .buttons {
+.esphome-confirm .buttons {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
 }
 
-dialog.esphome-confirm button {
+.esphome-confirm button {
     padding: 6px 14px;
     font-size: 1em;
     cursor: pointer;
 }
 
-dialog.esphome-confirm .confirm {
+.esphome-confirm .confirm {
     font-weight: bold;
 }
 
@@ -243,7 +259,6 @@ dialog.esphome-confirm .confirm {
 .entity-esphome-bluetooth {
     display: flex;
     flex-flow: column;
-    gap: 3px;
 }
 
 .entity-esphome-bluetooth .title-row {
@@ -251,7 +266,6 @@ dialog.esphome-confirm .confirm {
     flex-flow: row nowrap;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
 }
 
 .entity-esphome-bluetooth .name {
@@ -274,7 +288,6 @@ dialog.esphome-confirm .confirm {
 .entity-esphome-bluetooth .activity {
     display: flex;
     flex-flow: row wrap;
-    gap: 2px 14px;
 }
 
 .entity-esphome-bluetooth .stat .label {
@@ -283,4 +296,38 @@ dialog.esphome-confirm .confirm {
 
 .entity-esphome-bluetooth .stat .label::after {
     content: ":";
+}
+
+/* Spacing between the items of the flex containers above, with margins and not `gap`: gap in a flex container needs Safari 14.1, and an
+   iPad that stopped at iOS 9 to 14.0 draws everything touching without it. Rows that wrap give each item a margin on its right and below
+   (the last one's is invisible); columns and rows that don't wrap put it between one item and the next. */
+.entity-esphome-thermometer > * + *,
+.entity-esphome-door-sensor > * + *,
+.entity-esphome-switch > * + *,
+.entity-esphome-power > * + *,
+.entity-esphome-bluetooth > * + * {
+    margin-top: 3px;
+}
+
+.entity-esphome-thermometer .title-row > * + *,
+.entity-esphome-door-sensor .title-row > * + *,
+.entity-esphome-switch .title-row > * + *,
+.entity-esphome-power .title-row > * + *,
+.entity-esphome-bluetooth .title-row > * + *,
+.entity-esphome-door-sensor .position-row > * + *,
+.entity-esphome-switch .state-row > * + * {
+    margin-left: 8px;
+}
+
+.entity-esphome-thermometer .reading > *,
+.entity-esphome-power .readings > * {
+    margin: 0 12px 2px 0;
+}
+
+.entity-esphome-bluetooth .activity > * {
+    margin: 0 14px 2px 0;
+}
+
+.esphome-confirm .buttons > * + * {
+    margin-left: 8px;
 }

@@ -331,6 +331,14 @@ func addEsphome(coreConfig *config.Config) {
 }
 ```
 
+### Old browsers
+
+The pages are used on an iPad that stopped at iOS 9 (Safari 9), so the stylesheets and the switch script avoid what it doesn't have, at no cost to a
+modern browser: margins, not `gap`, between the items of a flex container (it needs Safari 14.1); `word-wrap: break-word` before
+`overflow-wrap: anywhere`; the question a guarded switch asks is a box over the page where there is no `<dialog>`; and `esphome_switch.js`
+is plain ES5 with `XMLHttpRequest` (a script that uses an arrow function, a class field or `fetch` doesn't run there at all, and
+the switches can't be clicked). Tests in `internal/http` (`oldbrowsers_test.go`, `js_test/`) look for what it doesn't have.
+
 ### Putting devices in groups
 
 Each configured device is also an **entity** (it has no stub: nothing is done through it), registered whether or not the device is

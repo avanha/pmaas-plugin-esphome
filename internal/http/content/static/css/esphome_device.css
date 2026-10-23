@@ -3,9 +3,9 @@
 .entity-esphome-device {
     display: flex;
     flex-flow: column;
-    gap: 4px;
     border-left: 5px solid #c8c8c8;
     padding-left: 8px;
+    word-wrap: break-word;
     overflow-wrap: anywhere;
 }
 
@@ -29,7 +29,6 @@
     display: flex;
     flex-flow: row wrap;
     align-items: baseline;
-    gap: 4px 10px;
 }
 
 .entity-esphome-device .device-header .name {
@@ -59,6 +58,7 @@
 .entity-esphome-device .problem {
     color: #d9534f;
     font-size: 0.9em;
+    word-wrap: break-word;
     overflow-wrap: anywhere;
 }
 
@@ -66,7 +66,6 @@
 .entity-esphome-device .device-details {
     display: flex;
     flex-flow: row wrap;
-    gap: 2px 14px;
     font-size: 0.9em;
 }
 
@@ -82,7 +81,6 @@
 .entity-esphome-device .children {
     display: flex;
     flex-flow: row wrap;
-    gap: 8px;
     margin-top: 2px;
 }
 
@@ -95,4 +93,23 @@
 
 .entity-esphome-device .none {
     opacity: 0.8;
+}
+
+/* Spacing between the items of the flex containers above, with margins and not `gap`: gap in a flex container needs Safari 14.1, and an
+   iPad that stopped at iOS 9 to 14.0 draws everything touching without it. Rows that wrap give each item a margin on its right and below
+   (the last one's is invisible); columns and rows that don't wrap put it between one item and the next. */
+.entity-esphome-device > * + * {
+    margin-top: 4px;
+}
+
+.entity-esphome-device .device-header > * {
+    margin: 0 10px 4px 0;
+}
+
+.entity-esphome-device .device-details > * {
+    margin: 0 14px 2px 0;
+}
+
+.entity-esphome-device .children > * {
+    margin: 0 8px 8px 0;
 }

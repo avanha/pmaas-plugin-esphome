@@ -21,7 +21,6 @@
     display: flex;
     flex-flow: row wrap;
     align-items: baseline;
-    gap: 4px 10px;
     margin: 0 0 2px 0;
 }
 
@@ -39,6 +38,7 @@
 
 /* A problem, such as why the broker isn't running, can be long: it wraps within the page. */
 .entity-esphome-status .wrap {
+    word-wrap: break-word;
     overflow-wrap: anywhere;
     min-width: 0;
     color: #d9534f;
@@ -51,4 +51,11 @@
 
 .entity-esphome-status .none {
     opacity: 0.8;
+}
+
+/* Spacing between the items of the flex containers above, with margins and not `gap`: gap in a flex container needs Safari 14.1, and an
+   iPad that stopped at iOS 9 to 14.0 draws everything touching without it. Rows that wrap give each item a margin on its right and below
+   (the last one's is invisible); columns and rows that don't wrap put it between one item and the next. */
+.entity-esphome-status .row > * {
+    margin: 0 10px 4px 0;
 }
