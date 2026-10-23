@@ -105,6 +105,10 @@ type DeviceStatus struct {
 	Manufacturer string
 	MAC          string
 
+	// ChipTemperature is the temperature of the device's chip, if it reports one. It is not an entity: it says how hot the device is, not
+	// the room, and is only for the card.
+	ChipTemperature *ChipTemperature
+
 	// EntityCount is how many entities of this device PMAAS is tracking.
 	EntityCount int
 
@@ -273,3 +277,11 @@ func (v BluetoothProxyView) SortKey() string { return v.DeviceName }
 
 // SortKey of a PowerView is its name alone, since a device has one power monitor.
 func (v PowerView) SortKey() string { return v.Name }
+
+// ChipTemperature is a device's own temperature, as it last reported it.
+type ChipTemperature struct {
+	// HasData is whether the device has reported one yet, Celsius is it, and LastUpdate when.
+	HasData    bool
+	Celsius    float32
+	LastUpdate time.Time
+}

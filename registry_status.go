@@ -65,6 +65,10 @@ func (r *registry) deviceStatus(name string) data.DeviceStatus {
 		status.DisconnectedSince = n.offlineSince
 	}
 
+	if n.chip != nil {
+		status.ChipTemperature = &data.ChipTemperature{HasData: n.chip.hasValue, Celsius: n.chip.value, LastUpdate: n.chip.lastUpdate}
+	}
+
 	for _, ch := range n.temps {
 		if ch.thermometer != nil {
 			status.EntityCount++

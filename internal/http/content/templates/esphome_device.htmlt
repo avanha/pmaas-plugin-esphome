@@ -30,6 +30,12 @@
             </span>
         {{end}}
         {{if .MAC}}<span class="detail"><span class="label">MAC</span> {{.MAC | html}}</span>{{end}}
+        {{if .ChipTemperature}}
+            <span class="detail chip-temperature" title="The temperature of the device's own chip, not the room's">
+                <span class="label">CPU temperature</span>
+                {{if .ChipTemperature.HasData}}{{Temperature .ChipTemperature.Celsius}} C ({{Fahrenheit .ChipTemperature.Celsius}} F){{else}}waiting for a reading{{end}}
+            </span>
+        {{end}}
         {{if and (not .LastMessageTime.IsZero) (not .OnlyBluetooth)}}
             <span class="detail"><span class="label">Last message</span> {{RelativeTime .LastMessageTime}}</span>
         {{end}}

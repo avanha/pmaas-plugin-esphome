@@ -157,6 +157,11 @@ The **ESPHome** entry in the menu opens a page like the other plugins': a status
   and what it said about itself: address, firmware, model, MAC. If a native API device can't be reached, the reason
   is on its card. Inside the card is everything of the device's that's tracked, each in a block of its own. A device
   that has nothing tracked yet, or has never connected, still has its card.
+* **The chip's temperature.** A native API device that has ESPHome's `internal_temperature` sensor shows it among what the device said about
+  itself, as "CPU temperature". It is not a thermometer and not an entity: it says how hot the device is, not the room, so it is not
+  listed with the rooms' thermometers or hosted by the environment plugin. The device marks it as a diagnostic (it is by default), which is
+  what tells it from a thermometer: a temperature sensor with `entity_category: diagnostic` is taken to be the chip's (the first one, if
+  there are several), and everything else that is marked as a diagnostic or a setting is hidden, as before.
 * **What's inside** is ordered by kind and then by name. Switches come first, then power monitors, door sensors and
   thermometers, as set by the priorities in `childorder.go`: the higher the number the earlier, and a kind that isn't
   listed comes after all that are, so a new kind appears at the end until someone decides where it belongs. To move a

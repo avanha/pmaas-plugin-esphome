@@ -552,38 +552,100 @@ func TestNative_ConfigurationAndDisabledEntitiesAreNotEntities(t *testing.T) {
 	}
 }
 
-// The ESP's own temperature (the internal_temperature sensor of an Athom relay) is a temperature sensor, but ESPHome marks it as a diagnostic,
-// and it measures the chip and not the room: it is not a thermometer, which would be listed with the rooms' and be put in the
-// environment plugin's. A temperature sensor that isn't marked is one.
-func TestNative_TheChipsOwnTemperatureIsNotAThermometerButARoomsIs(t *testing.T) {
+// The ESP's own temperature (the internal_temperature sensor of an Athom relay) is a temperature sensor, but ESPHome marks it as a
+// diagnostic, and it measures the chip and not the room: it is not a thermometer, which would be listed with the rooms' and be put in
+// the environment plugin's. It is on the device's card. A temperature sensor that isn't marked is a thermometer.
+func TestNative_TheChipsOwnTemperatureIsOnTheDevicesCardAndNotAThermometer(t *testing.T) {
+	f := newFixture(t)
+	f.registry.displayNames = map[string]string{}
+	f.registry.HandleConnected("relay1", "10.0.0.8")
+	listing := func(chipKey uint32) []proto.Message {
+		return []proto.Message{
+			&pb.ListEntitiesSwitchResponse{ObjectId: "relay", Key: 1, Name: "Relay"},
+			&pb.ListEntitiesSensorResponse{
+				ObjectId: "internal_temperature", Key: chipKey, Name: "Internal Temperature", DeviceClass: "temperature", UnitOfMeasurement: "°C",
+				EntityCategory: pb.EntityCategory_ENTITY_CATEGORY_DIAGNOSTIC,
+			},
+			&pb.ListEntitiesSensorResponse{ObjectId: "room", Key: 3, Name: "Room Temperature", DeviceClass: "temperature", UnitOfMeasurement: "°C"},
+			&pb.ListEntitiesDoneResponse{},
+		}
+	}
+
+	f.native("relay1", listing(2)...)
+
+	thermometers := map[string]bool{}
+
+	for _, r := range f.container.registrations {
+		if r.entityType == wirelessThermometerType {
+			thermometers[r.uniqueData] = true
+		}
+	}
+
+	if len(thermometers) != 1 || !thermometers["relay1/room"] {
+		t.Fatalf("the thermometers: %v", thermometers)
+	}
+
+	// On the card, waiting for a reading, and then with it.
+	if chip := f.registry.deviceView("relay1").ChipTemperature; chip == nil || chip.HasData {
+		t.Fatalf("%+v", chip)
+	}
+
+	f.advance(time.Second)
+	f.native("relay1", &pb.SensorStateResponse{Key: 2, State: 41.5}, &pb.SensorStateResponse{Key: 3, State: 21})
+
+	chip := f.registry.deviceView("relay1").ChipTemperature
+	if chip == nil || !chip.HasData || chip.Celsius != 41.5 || !chip.LastUpdate.Equal(f.clock) {
+		t.Fatalf("%+v", chip)
+	}
+
+	// The room's reading went to its thermometer, and the chip's to nothing else: its state is no thermometer's.
+	if got := lastThermometerState(t, f.container); got.SensorData.Temperature != 21 {
+		t.Errorf("the thermometer: %+v", got)
+	}
+
+	// A device numbers its entities afresh when it connects again: the reading is the last it took, and goes on with the new key.
+	f.registry.HandleDisconnected("relay1")
+	f.registry.HandleConnected("relay1", "10.0.0.8")
+	f.native("relay1", listing(9)...)
+	f.native("relay1", &pb.SensorStateResponse{Key: 9, State: 43})
+
+	if chip := f.registry.deviceView("relay1").ChipTemperature; chip == nil || chip.Celsius != 43 {
+		t.Errorf("%+v", chip)
+	}
+
+	// And when it stops describing it, it is gone from the card.
+	f.native("relay1", &pb.ListEntitiesSwitchResponse{ObjectId: "relay", Key: 1, Name: "Relay"}, &pb.ListEntitiesDoneResponse{})
+
+	if chip := f.registry.deviceView("relay1").ChipTemperature; chip != nil {
+		t.Errorf("%+v", chip)
+	}
+}
+
+func TestNative_OnlyTheFirstDiagnosticTemperatureIsTheChipsAndOneInFahrenheitIsConverted(t *testing.T) {
 	f := newFixture(t)
 	f.registry.displayNames = map[string]string{}
 	f.registry.HandleConnected("relay1", "10.0.0.8")
 	f.native("relay1",
-		&pb.ListEntitiesSwitchResponse{ObjectId: "relay", Key: 1, Name: "Relay"},
 		&pb.ListEntitiesSensorResponse{
-			ObjectId: "internal_temperature", Key: 2, Name: "Internal Temperature", DeviceClass: "temperature", UnitOfMeasurement: "°C",
-			EntityCategory: pb.EntityCategory_ENTITY_CATEGORY_DIAGNOSTIC,
+			ObjectId: "cpu", Key: 1, Name: "CPU", DeviceClass: "temperature", UnitOfMeasurement: "°F", EntityCategory: pb.EntityCategory_ENTITY_CATEGORY_DIAGNOSTIC,
 		},
-		&pb.ListEntitiesSensorResponse{ObjectId: "room", Key: 3, Name: "Room Temperature", DeviceClass: "temperature", UnitOfMeasurement: "°C"},
+		&pb.ListEntitiesSensorResponse{
+			ObjectId: "other", Key: 2, Name: "Other", DeviceClass: "temperature", UnitOfMeasurement: "°C", EntityCategory: pb.EntityCategory_ENTITY_CATEGORY_DIAGNOSTIC,
+		},
+		&pb.ListEntitiesSensorResponse{
+			ObjectId: "off", Key: 3, Name: "Off", DeviceClass: "temperature", UnitOfMeasurement: "°C", EntityCategory: pb.EntityCategory_ENTITY_CATEGORY_DIAGNOSTIC,
+			DisabledByDefault: true,
+		},
 		&pb.ListEntitiesDoneResponse{})
+	f.native("relay1", &pb.SensorStateResponse{Key: 2, State: 99}, &pb.SensorStateResponse{Key: 1, State: 104})
 
-	for _, r := range f.container.registrations {
-		if r.entityType == wirelessThermometerType && r.uniqueData != "relay1/room" {
-			t.Errorf("a thermometer for %q", r.uniqueData)
-		}
+	chip := f.registry.deviceView("relay1").ChipTemperature
+	if chip == nil || !chip.HasData || chip.Celsius < 39.9 || chip.Celsius > 40.1 {
+		t.Errorf("%+v", chip)
 	}
 
-	thermometers := 0
-
-	for _, r := range f.container.registrations {
-		if r.entityType == wirelessThermometerType {
-			thermometers++
-		}
-	}
-
-	if thermometers != 1 {
-		t.Errorf("%d thermometers: %+v", thermometers, f.container.registrations)
+	if len(f.container.registrations) != 0 {
+		t.Errorf("registrations: %+v", f.container.registrations)
 	}
 }
 

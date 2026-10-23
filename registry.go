@@ -97,8 +97,22 @@ type node struct {
 	// registered when the first of them is announced and deregistered when the last is gone.
 	power *entities.PowerMonitor
 
+	// chip is the device's own temperature, the chip's and not a room's (ESPHome's internal_temperature), if it has one. Only a
+	// device on the native API has it: see registry_native.go.
+	chip *chipTemperature
+
 	// What's only used by a device that's reached over the native API: see registry_native.go.
 	native nativeState
+}
+
+// chipTemperature is the temperature of the device's chip, with the key the device identifies it by. It is shown on the device's card
+// and is not an entity: it measures the device and not its surroundings, so it is not a thermometer to list with the rooms'.
+type chipTemperature struct {
+	key        uint32
+	toBase     func(float32) float32
+	value      float32
+	hasValue   bool
+	lastUpdate time.Time
 }
 
 // sensorChannel is a discovered numeric sensor and its latest reading.

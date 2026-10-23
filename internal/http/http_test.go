@@ -751,3 +751,20 @@ func TestStatusTemplate_CountsBluetoothProxies(t *testing.T) {
 	out = render(t, statusTemplate, &data.PluginStatus{})
 	checkContains(t, out, []string{"0 Bluetooth proxies"}, nil)
 }
+
+func TestDeviceTemplate_ShowsTheChipsTemperatureOnlyForADeviceThatHasOne(t *testing.T) {
+	device := &deviceWithChildren{DeviceStatus: data.DeviceStatus{
+		Name: "relay1", Label: "Relay 1", Connected: true,
+		ChipTemperature: &data.ChipTemperature{HasData: true, Celsius: 41.25},
+	}}
+
+	checkContains(t, render(t, deviceTemplate, device), []string{"CPU temperature", "41.25 C", "106.25 F"}, []string{"waiting for a reading"})
+
+	device.ChipTemperature.HasData = false
+
+	checkContains(t, render(t, deviceTemplate, device), []string{"CPU temperature", "waiting for a reading"}, []string{" C ("})
+
+	device.ChipTemperature = nil
+
+	checkContains(t, render(t, deviceTemplate, device), nil, []string{"CPU temperature"})
+}

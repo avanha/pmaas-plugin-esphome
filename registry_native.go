@@ -38,6 +38,9 @@ type nativeState struct {
 	// those it marks as its own configuration or has disabled. They're reported in one line when it's done.
 	ignored map[string]int
 	hidden  int
+
+	// chipSeen is that the device has described its chip's temperature in this listing.
+	chipSeen bool
 }
 
 // HandleNativeMessage processes one message a device sent over the native API.
@@ -54,6 +57,10 @@ func (r *registry) HandleNativeMessage(deviceName string, message proto.Message)
 		n.info = mergeDeviceInfo(n.info, nativeDeviceInfo(m))
 		r.updateNames(n)
 	case *pb.ListEntitiesSensorResponse:
+		if r.describeChipTemperature(n, m) {
+			return
+		}
+
 		if hiddenNativeEntity(m.EntityCategory, m.DisabledByDefault) {
 			n.native.hidden++
 			return
@@ -87,6 +94,7 @@ func (r *registry) HandleNativeMessage(deviceName string, message proto.Message)
 		r.finishNativeListing(n)
 	case *pb.SensorStateResponse:
 		if !m.MissingState {
+			r.applyChipTemperature(n, m.Key, m.State)
 			r.applyNativeSensor(n, m.Key, float64(m.State))
 		}
 	case *pb.BinarySensorStateResponse:
@@ -248,8 +256,14 @@ func (r *registry) finishNativeListing(n *node) {
 		delete(n.native.keys, key)
 	}
 
+	// The chip's temperature is gone if the device has stopped describing it.
+	if !n.native.chipSeen {
+		n.chip = nil
+	}
+
 	r.logNativeListing(n)
 
+	n.native.chipSeen = false
 	n.native.listing = nil
 	n.native.ignored = nil
 	n.native.hidden = 0
@@ -386,4 +400,45 @@ func (r *registry) commandNativeSwitch(n *node, ch *switchChannel, name string, 
 	}
 
 	return nil
+}
+
+// describeChipTemperature takes in a sensor that is the device's own temperature, and says whether it was one. ESPHome's
+// internal_temperature is a temperature sensor, but it measures the chip, not the room, and it is marked as a diagnostic, which is what
+// tells it from a thermometer: those are for what is around the device. It is kept for the device's card, not registered as an entity,
+// so that it is not listed with the rooms' thermometers or hosted by the environment plugin. A device that has more than one has the first.
+func (r *registry) describeChipTemperature(n *node, m *pb.ListEntitiesSensorResponse) bool {
+	if m.DeviceClass != "temperature" || m.EntityCategory != pb.EntityCategory_ENTITY_CATEGORY_DIAGNOSTIC || m.DisabledByDefault {
+		return false
+	}
+
+	toBase := temperatureConverter(m.UnitOfMeasurement)
+	if toBase == nil {
+		r.logf(slog.LevelWarn, "%s: ignoring the chip's temperature %q: unsupported unit %q", n.name, m.ObjectId, m.UnitOfMeasurement)
+
+		return true
+	}
+
+	if n.native.chipSeen {
+		return true
+	}
+
+	n.native.chipSeen = true
+
+	if n.chip == nil {
+		n.chip = &chipTemperature{}
+	}
+
+	// The device numbers its entities afresh each time it connects, and a reading it had before is still the last it took.
+	n.chip.key, n.chip.toBase = m.Key, toBase
+
+	return true
+}
+
+// applyChipTemperature takes in a reading, if the key is the chip's.
+func (r *registry) applyChipTemperature(n *node, key uint32, value float32) {
+	if n.chip == nil || n.chip.key != key || n.chip.toBase == nil {
+		return
+	}
+
+	n.chip.value, n.chip.hasValue, n.chip.lastUpdate = n.chip.toBase(value), true, r.now()
 }

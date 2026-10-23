@@ -32,6 +32,7 @@ var funcMap = template.FuncMap{
 var deviceFuncMap = template.FuncMap{
 	"RelativeTime": format.Ago,
 	"RenderChild":  renderChild,
+	"Temperature":  format.Temperature, "Fahrenheit": format.Fahrenheit,
 }
 
 // The device card carries the styles and scripts of everything that can be inside it, since the page only collects
