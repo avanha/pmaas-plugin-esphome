@@ -3,6 +3,7 @@ package esphome
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -429,14 +430,23 @@ func (r *registry) describeChipTemperature(n *node, m *pb.ListEntitiesSensorResp
 	}
 
 	// The device numbers its entities afresh each time it connects, and a reading it had before is still the last it took.
-	n.chip.key, n.chip.toBase = m.Key, toBase
+	n.chip.key, n.chip.objectID, n.chip.toBase = m.Key, m.ObjectId, toBase
 
 	return true
 }
 
 // applyChipTemperature takes in a reading, if the key is the chip's.
 func (r *registry) applyChipTemperature(n *node, key uint32, value float32) {
-	if n.chip == nil || n.chip.key != key || n.chip.toBase == nil {
+	if n.chip == nil || n.chip.topic != "" || n.chip.key != key {
+		return
+	}
+
+	r.setChipTemperature(n, value)
+}
+
+// setChipTemperature takes in a reading of the chip's temperature, in the sensor's own unit, however it arrived. Not a number is no reading.
+func (r *registry) setChipTemperature(n *node, value float32) {
+	if n.chip == nil || n.chip.toBase == nil || math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
 		return
 	}
 

@@ -34,6 +34,12 @@ type Entity struct {
 	DeviceClass       string
 	UnitOfMeasurement string
 
+	// EntityCategory is what the device says the entity is for, if it says: "diagnostic" for something about the device itself (the
+	// temperature of its chip, its signal strength) and "config" for one of its settings. Empty for an ordinary entity.
+	// DisabledByDefault is that the device says it is not enabled unless someone asks.
+	EntityCategory    string
+	DisabledByDefault bool
+
 	// StatePayloadOn and StatePayloadOff are the state payloads meaning on and off (binary_sensor
 	// and switch). They default to "ON" and "OFF".
 	StatePayloadOn  string
@@ -132,6 +138,8 @@ func Parse(prefix string, topic string, payload []byte) (entity *Entity, key Key
 		AvailabilityTopic: expandBase(base, c.availabilityTopic()),
 		DeviceClass:       c.str("device_class", "dev_cla"),
 		UnitOfMeasurement: c.str("unit_of_measurement", "unit_of_meas"),
+		EntityCategory:    c.str("entity_category", "ent_cat"),
+		DisabledByDefault: c.falseOf("enabled_by_default", "en"),
 		ValueTemplate:     c.str("value_template", "val_tpl"),
 		Device:            c.device(),
 	}
@@ -192,6 +200,23 @@ func (c config) str(keys ...string) string {
 }
 
 // availabilityTopic returns availability_topic, or the first entry's topic of an availability list.
+// falseOf is whether the config says no to a boolean it may leave out: true only if it is there, and false.
+func (c config) falseOf(keys ...string) bool {
+	for _, key := range keys {
+		value, ok := c.raw[key]
+		if !ok {
+			continue
+		}
+
+		var b bool
+		if err := json.Unmarshal(value, &b); err == nil {
+			return !b
+		}
+	}
+
+	return false
+}
+
 func (c config) availabilityTopic() string {
 	if topic := c.str("availability_topic", "avty_t"); topic != "" {
 		return topic

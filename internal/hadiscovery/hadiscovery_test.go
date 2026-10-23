@@ -147,3 +147,20 @@ func TestParse_Errors(t *testing.T) {
 		t.Error("expected error for non-config topic")
 	}
 }
+
+func TestParse_TheCategoryAndWhetherItIsEnabledByDefaultInBothSpellings(t *testing.T) {
+	for _, c := range []struct {
+		name, payload, category string
+		disabled                bool
+	}{
+		{"full keys", `{"name":"Internal Temperature","state_topic":"g/sensor/internal_temperature/state","entity_category":"diagnostic","enabled_by_default":false}`, "diagnostic", true},
+		{"abbreviations", `{"name":"Internal Temperature","stat_t":"g/sensor/internal_temperature/state","ent_cat":"diagnostic","en":false}`, "diagnostic", true},
+		{"a setting that is enabled", `{"name":"x","stat_t":"g/switch/x/state","ent_cat":"config","en":true}`, "config", false},
+		{"neither", `{"name":"x","stat_t":"g/switch/x/state"}`, "", false},
+	} {
+		e, _, _, err := Parse("homeassistant", "homeassistant/sensor/g/internal_temperature/config", []byte(c.payload))
+		if err != nil || e.EntityCategory != c.category || e.DisabledByDefault != c.disabled {
+			t.Errorf("%s: %+v %v", c.name, e, err)
+		}
+	}
+}

@@ -791,3 +791,85 @@ func (h recordingHandler) Handle(_ context.Context, r slog.Record) error {
 
 func (h recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// An MQTT device announces the temperature of its own chip (ESPHome's internal_temperature) as a temperature sensor with a category of
+// diagnostic. It is on the device's card, as it is for a device on the native API, and it is not a thermometer.
+func TestChipTemperature_AnMQTTDevicesIsOnItsCardAndNotAThermometer(t *testing.T) {
+	f := newFixture(t)
+	f.registry.HandleConnected("relay1", "10.0.0.9")
+
+	f.discover("relay1", "sensor", "internal_temperature",
+		`{"name":"Internal Temperature","state_topic":"relay1/sensor/internal_temperature/state","device_class":"temperature","unit_of_measurement":"°C","ent_cat":"diagnostic","device":{"name":"relay1"}}`)
+	f.discover("relay1", "sensor", "room", sensorConfig("relay1", "room", "Room", "temperature", "°C"))
+
+	if len(f.container.registrations) != 1 || f.container.registrations[0].uniqueData != "relay1/room" {
+		t.Fatalf("registrations: %+v", f.container.registrations)
+	}
+
+	if chip := f.registry.deviceView("relay1").ChipTemperature; chip == nil || chip.HasData {
+		t.Fatalf("%+v", chip)
+	}
+
+	f.advance(time.Second)
+	f.state("relay1", "relay1/sensor/internal_temperature/state", "nan")
+
+	if chip := f.registry.deviceView("relay1").ChipTemperature; chip.HasData {
+		t.Fatalf("not a number was a reading: %+v", chip)
+	}
+
+	f.state("relay1", "relay1/sensor/internal_temperature/state", "44.5")
+	f.state("relay1", "relay1/sensor/room/state", "20")
+
+	chip := f.registry.deviceView("relay1").ChipTemperature
+	if chip == nil || !chip.HasData || chip.Celsius != 44.5 || !chip.LastUpdate.Equal(f.clock) {
+		t.Fatalf("%+v", chip)
+	}
+
+	if got := lastThermometerState(t, f.container); got.SensorData.Temperature != 20 {
+		t.Errorf("the thermometer: %+v", got)
+	}
+
+	// The device takes it back.
+	f.discover("relay1", "sensor", "internal_temperature", "")
+
+	if chip := f.registry.deviceView("relay1").ChipTemperature; chip != nil {
+		t.Errorf("%+v", chip)
+	}
+}
+
+func TestChipTemperature_ASensorThatBecomesADiagnosticStopsBeingAThermometer(t *testing.T) {
+	f := newFixture(t)
+	f.discover("garage1", "sensor", "cpu", sensorConfig("garage1", "cpu", "CPU", "temperature", "°C"))
+
+	if len(f.container.registrations) != 1 {
+		t.Fatalf("%+v", f.container.registrations)
+	}
+
+	f.discover("garage1", "sensor", "cpu",
+		`{"name":"CPU","state_topic":"garage1/sensor/cpu/state","device_class":"temperature","unit_of_measurement":"°C","entity_category":"diagnostic","device":{"name":"garage1"}}`)
+
+	if len(f.container.deregistered) != 1 || f.registry.deviceView("garage1").ChipTemperature == nil {
+		t.Errorf("deregistered %v, card %+v", f.container.deregistered, f.registry.deviceView("garage1").ChipTemperature)
+	}
+}
+
+// The device's settings and what is off unless asked for are not entities, as for a device on the native API.
+func TestHidden_AnMQTTDevicesSettingsAndDisabledEntitiesAreNotEntities(t *testing.T) {
+	f := newFixture(t)
+
+	f.discover("plug1", "switch", "relay", `{"name":"Relay","state_topic":"plug1/switch/relay/state","command_topic":"plug1/switch/relay/command"}`)
+	f.discover("plug1", "switch", "blue_led",
+		`{"name":"Blue LED","state_topic":"plug1/switch/blue_led/state","command_topic":"plug1/switch/blue_led/command","ent_cat":"config"}`)
+	f.discover("plug1", "switch", "quiet",
+		`{"name":"Quiet","state_topic":"plug1/switch/quiet/state","command_topic":"plug1/switch/quiet/command","en":false}`)
+	f.discover("plug1", "sensor", "wifi",
+		`{"name":"WiFi","state_topic":"plug1/sensor/wifi/state","device_class":"voltage","unit_of_measurement":"V","ent_cat":"diagnostic"}`)
+
+	if len(f.container.registrations) != 1 || f.container.registrations[0].uniqueData != "plug1/relay" {
+		t.Fatalf("registrations: %+v", f.container.registrations)
+	}
+
+	if chip := f.registry.deviceView("plug1").ChipTemperature; chip != nil {
+		t.Errorf("a chip's temperature that is not one: %+v", chip)
+	}
+}

@@ -108,7 +108,11 @@ type node struct {
 // chipTemperature is the temperature of the device's chip, with the key the device identifies it by. It is shown on the device's card
 // and is not an entity: it measures the device and not its surroundings, so it is not a thermometer to list with the rooms'.
 type chipTemperature struct {
-	key        uint32
+	// key is what a native API device identifies it by, and topic where an MQTT device publishes it: whichever the device is reached by.
+	key      uint32
+	topic    string
+	objectID string
+
 	toBase     func(float32) float32
 	value      float32
 	hasValue   bool
@@ -262,6 +266,12 @@ func (r *registry) HandleMessage(device string, topic string, payload []byte) {
 		return
 	}
 
+	if n.chip != nil && n.chip.topic != "" && n.chip.topic == topic {
+		if value, ok := parseNumber(payload); ok {
+			r.setChipTemperature(n, value)
+		}
+	}
+
 	for _, ch := range n.temps {
 		if ch.disc.StateTopic == topic {
 			r.handleSensorState(n, &ch.sensorChannel, payload)
@@ -349,6 +359,19 @@ func (r *registry) handleDiscovery(device string, topic string, payload []byte) 
 		return
 	}
 
+	// What the device says is its own business, or a setting of it, or is off unless asked for, is not what PMAAS is for, as it is not for a
+	// device on the native API (see hiddenNativeEntity). One that was an entity before this is dropped. The temperature of the chip is the
+	// exception: it is kept, for the device's card.
+	if entity.EntityCategory != "" || entity.DisabledByDefault {
+		r.removeChannel(n, key)
+
+		if !r.describeChipTemperatureMQTT(n, *entity) {
+			r.logf(slog.LevelInfo, "%s: hiding %s %q: it is marked as %s", device, entity.Component, entity.ObjectID, hiddenWhy(*entity))
+		}
+
+		return
+	}
+
 	r.upsertEntity(n, *entity, true)
 }
 
@@ -415,6 +438,46 @@ func unusable(device string, e hadiscovery.Entity) string {
 	}
 
 	return ""
+}
+
+// hiddenWhy is what an entity that is hidden is marked as, for the log.
+func hiddenWhy(e hadiscovery.Entity) string {
+	switch {
+	case e.EntityCategory != "" && e.DisabledByDefault:
+		return e.EntityCategory + " and disabled by default"
+	case e.EntityCategory != "":
+		return e.EntityCategory
+	default:
+		return "disabled by default"
+	}
+}
+
+// describeChipTemperatureMQTT keeps a diagnostic temperature sensor of a device announcing over MQTT as the temperature of its chip, for the
+// device's card, and says whether it was one (see describeChipTemperature, for the native API, which has the same rule). A device that has more
+// than one has the first.
+func (r *registry) describeChipTemperatureMQTT(n *node, e hadiscovery.Entity) bool {
+	if e.Component != "sensor" || e.DeviceClass != "temperature" || e.EntityCategory != "diagnostic" || e.DisabledByDefault {
+		return false
+	}
+
+	toBase := temperatureConverter(e.UnitOfMeasurement)
+	if toBase == nil {
+		r.logf(slog.LevelWarn, "%s: ignoring the chip's temperature %q: unsupported unit %q", n.name, e.ObjectID, e.UnitOfMeasurement)
+
+		return true
+	}
+
+	if n.chip != nil && n.chip.objectID != e.ObjectID {
+		return true
+	}
+
+	if n.chip == nil {
+		n.chip = &chipTemperature{}
+	}
+
+	n.chip.topic, n.chip.objectID, n.chip.toBase = e.StateTopic, e.ObjectID, toBase
+
+	return true
 }
 
 func isDoorClass(deviceClass string) bool {
@@ -506,6 +569,10 @@ func (r *registry) upsertDoor(n *node, e hadiscovery.Entity) {
 func (r *registry) removeChannel(n *node, key hadiscovery.Key) {
 	switch key.Component {
 	case "sensor":
+		if n.chip != nil && n.chip.objectID == key.ObjectID {
+			n.chip = nil
+		}
+
 		if ch, ok := n.temps[key.ObjectID]; ok {
 			r.deregisterThermometer(ch)
 			delete(n.temps, key.ObjectID)
